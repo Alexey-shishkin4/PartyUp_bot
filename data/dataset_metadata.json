@@ -1,0 +1,8 @@
+{
+  "title": "Steam Video Games",
+  "id": 915,
+  "lastUpdated": "2017-03-09T03:01:26.933Z",
+  "licenseName": "Database: Open Database, Contents: Database Contents",
+  "totalBytes": 8958107,
+  "description": "# Context \n\nSteam is the world's most popular PC Gaming hub, with over 6,000 games and a community of millions of gamers. With a massive collection that includes everything from AAA blockbusters to small indie titles, great discovery tools are a highly valuable asset for Steam. How can we make them better?\n\n\n# Content\n\nThis dataset is a list of user behaviors, with columns: user-id, game-title, behavior-name, value. The behaviors included are 'purchase' and 'play'. The value indicates the degree to which the behavior was performed - in the case of 'purchase' the value is always 1, and in the case of 'play' the value represents the number of hours the user has played the game.\n\n\n# Acknowledgements\n\nThis dataset is generated entirely from public Steam data, so we want to thank Steam for building such an awesome platform and community!\n\n\n# Inspiration\n\nThe dataset is formatted to be compatible with [Tamber][1]. Build a Tamber engine and take it for a spin! \n\nCombine our collaborative filter's results with your favorite Machine Learning techniques with Ensemble Learning, or make Tamber do battle with something else you've built.\n\nHave fun,\nThe Tamber Team\n\n\n  [1]: https://tamber.com"
+}

@@ -1,0 +1,69 @@
+{
+  "date": "2026-11-17",
+  "python": "3.10.6",
+  "automated_tests": 135,
+  "test_result": "passed",
+  "ruff": "passed",
+  "javascript_syntax": "passed",
+  "powershell_syntax": "passed",
+  "browser": {
+    "engine": "installed Google Chrome via Playwright",
+    "desktop": "1440x1100",
+    "mobile": "390x844",
+    "console_errors": [],
+    "horizontal_overflow": false,
+    "scenarios": [
+      "feed",
+      "mutual match",
+      "profile update",
+      "purpose filter",
+      "demo reset"
+    ]
+  },
+  "external_integration": {
+    "telegram": "live getMe and webhook inspected; long polling running at @POHUY_POKA_bot",
+    "steam": "public profile parser tested live without key; profile_only coverage; game library requires login on sampled profiles; XML/HTML game imports tested with fixtures",
+    "kaggle": "public metadata and 200000-row dataset downloaded; model trained"
+  },
+  "deployment": "local demo on port 8765; live Telegram bot running from local port 8766; no public hosting configured",
+  "known_test_warning": "Starlette TestClient deprecates its httpx adapter; tests pass",
+  "profile_photos": {
+    "registration_upload": "tested with Telegram fixtures",
+    "replace_remove": "passed",
+    "cards": "own profile, feed and matches",
+    "legacy_schema_upgrade": "passed; registered user and games preserved",
+    "storage": "private Telegram file_id; no local image download",
+    "live_upload": "user supplied photo and confirmed the photo card in chat"
+  },
+  "steam_display": {
+    "imported_games_visible": "passed",
+    "manual_favorites_preserved": "passed",
+    "cache_messages": "distinguish full, recent, empty and unavailable library",
+    "failed_check_retry": "one minute",
+    "legacy_imported_rows": "preserved and displayed"
+  },
+  "developer_panel": {
+    "entry": "/dev",
+    "authorization": "explicit Telegram ID allowlist on every operation",
+    "group_chat_protection": "passed",
+    "permission_revocation": "passed",
+    "profile_fields_photos_games": "passed",
+    "hidden_and_banned_profiles": "passed",
+    "readonly_search_preview": "passed; no activity or impression mutation",
+    "private_card_preview": "authorized developers only; short and long captions; public test disclosure retained",
+    "audit": "actor ID, target ID, action and field names; no credentials or chat contents",
+    "test_fixture_edits_survive_restart": "passed"
+  },
+  "test_profiles": {
+    "count": 5,
+    "photo_source": "five user-selected Pinterest pins recorded in data/test_profiles.json",
+    "command": "/test",
+    "labels": "fictional names, ages and interests; illustrative photos",
+    "regular_search": "labelled static test cards honour the same filters as real profiles",
+    "automated_replies": false,
+    "fake_match_prevention": "passed",
+    "training_event_isolation": "passed",
+    "photos_visually_inspected": true,
+    "cached_photo_replacement": "passed; retired examples hidden; real photos preserved"
+  }
+}

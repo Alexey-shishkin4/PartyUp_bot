@@ -1,0 +1,87 @@
+[
+  {
+    "telegram_id": -10001,
+    "slug": "mira",
+    "name": "Мира",
+    "age": 24,
+    "timezone": "Asia/Novosibirsk",
+    "start_hour": 20,
+    "end_hour": 24,
+    "game_ids": [
+      1245620,
+      739630,
+      413150
+    ],
+    "bio": "В Elden Ring исследую каждый угол, в Phasmophobia первой теряю фонарик. Люблю спокойный кооп и обсуждать любимые миры.",
+    "pin_url": "https://ru.pinterest.com/pin/946881890429994739/",
+    "image_url": "https://i.pinimg.com/736x/6c/87/64/6c8764afe1bdd30eb6f13770d6506b06.jpg"
+  },
+  {
+    "telegram_id": -10002,
+    "slug": "nika",
+    "name": "Ника",
+    "age": 23,
+    "timezone": "Asia/Novosibirsk",
+    "start_hour": 19,
+    "end_hour": 24,
+    "game_ids": [
+      570,
+      730,
+      230410
+    ],
+    "bio": "Ищу компанию для вечерних каток. Люблю понятные коллы, хорошие плейлисты и перерывы на разговоры между матчами.",
+    "pin_url": "https://ru.pinterest.com/pin/980025568925759451/",
+    "image_url": "https://i.pinimg.com/736x/d0/84/bc/d084bc83fea85682238bb65e67ade469.jpg"
+  },
+  {
+    "telegram_id": -10003,
+    "slug": "asya",
+    "name": "Ася",
+    "age": 25,
+    "timezone": "Asia/Krasnoyarsk",
+    "start_hour": 20,
+    "end_hour": 1,
+    "game_ids": [
+      1086940,
+      105600,
+      548430
+    ],
+    "bio": "Хочу новое прохождение BG3 и бесконечно большую базу в Terraria. За совместное исследование, мемы и без спешки.",
+    "pin_url": "https://ru.pinterest.com/pin/869617009315087028/",
+    "image_url": "https://i.pinimg.com/736x/e1/3b/f1/e13bf1635e0ff2a13d4e654d383838df.jpg"
+  },
+  {
+    "telegram_id": -10004,
+    "slug": "lera",
+    "name": "Лера",
+    "age": 26,
+    "timezone": "Europe/Moscow",
+    "start_hour": 18,
+    "end_hour": 23,
+    "game_ids": [
+      1091500,
+      1145360,
+      367520
+    ],
+    "bio": "Собираю саундтреки из игр и всё ещё ищу секретные проходы в Hollow Knight. Обсудим персонажей, музыку и любимые истории.",
+    "pin_url": "https://ru.pinterest.com/pin/1055249756439621220/",
+    "image_url": "https://i.pinimg.com/736x/0d/79/9b/0d799bae088771320815b496f7171681.jpg"
+  },
+  {
+    "telegram_id": -10005,
+    "slug": "sonya",
+    "name": "Соня",
+    "age": 22,
+    "timezone": "Asia/Novosibirsk",
+    "start_hour": 21,
+    "end_hour": 2,
+    "game_ids": [
+      739630,
+      1966720,
+      3241660
+    ],
+    "bio": "Люблю кооперативные хорроры, хотя сама пугаюсь каждого звука. Буду смеяться, кричать и возвращаться спасать твою экипировку.",
+    "pin_url": "https://ru.pinterest.com/pin/1125477763155003678/",
+    "image_url": "https://i.pinimg.com/736x/a1/08/bf/a108bfa000ae19e9ca2ec98548b87327.jpg"
+  }
+]

@@ -1,0 +1,14 @@
+services:
+  partyup:
+    build: .
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8765
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - partyup-data:/app/data
+    restart: unless-stopped
+volumes:
+  partyup-data:
