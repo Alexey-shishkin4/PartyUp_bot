@@ -28,6 +28,10 @@ class Database:
         # Preserve registered users and drafts while upgrading older MVP databases.
         existing_columns = {column["name"] for column in inspect(self.engine).get_columns("users")}
         additions = {
+            "share_username": "ALTER TABLE users ADD COLUMN share_username BOOLEAN NOT NULL DEFAULT 0",
+            "looking_for_game": "ALTER TABLE users ADD COLUMN looking_for_game INTEGER",
+            "looking_until": "ALTER TABLE users ADD COLUMN looking_until DATETIME",
+            "notify_new_profiles": "ALTER TABLE users ADD COLUMN notify_new_profiles BOOLEAN NOT NULL DEFAULT 0",
             "steam_verified": "ALTER TABLE users ADD COLUMN steam_verified BOOLEAN NOT NULL DEFAULT 0",
             "photo_file_id": "ALTER TABLE users ADD COLUMN photo_file_id VARCHAR(1024)",
             "steam_import_status": "ALTER TABLE users ADD COLUMN steam_import_status VARCHAR(24) NOT NULL DEFAULT 'not_loaded'",

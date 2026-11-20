@@ -54,7 +54,7 @@ def create_app(settings=None, database=None, start_bot=True):
                     await bot.get_me()
                 except Exception:
                     raise RuntimeError("Не удалось подключить Telegram. Проверьте BOT_TOKEN и сеть") from None
-                app.state.polling = asyncio.create_task(run_polling(bot, dispatcher,settings))
+                app.state.polling = asyncio.create_task(run_polling(bot, dispatcher, settings, service))
             yield
         finally:
             if app.state.polling:

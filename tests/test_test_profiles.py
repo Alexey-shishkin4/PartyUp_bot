@@ -19,7 +19,7 @@ def test_fixtures_with_photos_and_source_links(service):
         assert len(user.games) == 3 and fixture_photo(user.telegram_id).is_file()
         info = service.public_profile(user)
         assert info["is_test"] and info["has_photo"] and "pinterest.com/" in info["photo_source_url"]
-        assert "ТЕСТОВАЯ АНКЕТА" in profile_text(info)
+        assert "ДЕМО-ПРОФИЛЬ БОТА" in profile_text(info)
 
 
 def test_seed_is_idempotent_and_preserves_real_profile(service,users):

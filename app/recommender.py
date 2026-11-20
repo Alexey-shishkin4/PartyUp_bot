@@ -111,7 +111,24 @@ def score(a: User, b: User, model: AffinityModel, now: datetime | None = None) -
     genres_score = sum(value * tb.get(key, 0) for key, value in ta.items())
     now = now or datetime.now(timezone.utc)
     sa, sb = schedule_slots(a, now), schedule_slots(b, now)
-    overlap = len(sa & sb)
+    shared = sa & sb
+    overlap = len(shared)
+    base = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    zone = ZoneInfo(a.timezone)
+    local_now = now.astimezone(zone)
+    # Choose the next shared window. Group adjacent half-hour slots in UTC,
+    # then convert its endpoints to the viewer's time zone.
+    current_slot = int((now - base).total_seconds() // 1800)
+    first = min((index for index in shared if index >= current_slot), default=None)
+    window = None
+    if first is not None:
+        last = first
+        while last + 1 in shared:
+            last += 1
+        start = (base + timedelta(minutes=30 * first)).astimezone(zone)
+        end = (base + timedelta(minutes=30 * (last + 1))).astimezone(zone)
+        window = {"start": start.strftime("%H:%M"), "end": end.strftime("%H:%M"),
+                  "day_offset": (start.date() - local_now.date()).days, "ongoing": start <= now}
     time_score = overlap / max(len(sa), len(sb), 1)
     common = sorted(wa.keys() & wb.keys(), key=lambda key: wa[key] * wb[key], reverse=True)
     total = 0.65 * games_score + 0.25 * genres_score + 0.10 * time_score
@@ -123,6 +140,7 @@ def score(a: User, b: User, model: AffinityModel, now: datetime | None = None) -
         "coop_games": [ga[key].name for key in common if ga[key].coop][:3],
         "common_genres": sorted(ta.keys() & tb.keys()),
         "overlap_hours": round(overlap / 2 / 7, 1),
+        "next_overlap": window,
         "algorithm": VERSION,
         "model": model.version,
     }

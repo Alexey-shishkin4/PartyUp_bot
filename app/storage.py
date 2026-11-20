@@ -4,7 +4,7 @@ from .models import FSMRecord
 
 
 class DatabaseStorage(BaseStorage):
-    """Registration and relay state survive restarts and are deleted with the profile."""
+    """Interaction state survives restarts and is deleted with the profile."""
     def __init__(self, db):
         self.db = db
         self.builder = DefaultKeyBuilder(with_bot_id=True, with_destiny=True)

@@ -191,7 +191,7 @@ async def test_private_card_preview_preserves_public_disclosure(service, users, 
     assert isinstance(photo.photo, FSInputFile)
     card_text = photo.caption + "\n" + "\n".join(message.text for message in harness.sent()[1:])
     assert target.name in card_text
-    assert "ТЕСТОВАЯ АНКЕТА" not in card_text and "Источник фото" not in card_text
+    assert "ДЕМО-ПРОФИЛЬ БОТА" not in card_text and "Источник фото" not in card_text
     assert "Telegram ID" not in card_text
     action_message = harness.sent()[-1] if long_bio else photo
     assert f"dev:profile:{target_id}" in str(action_message.reply_markup)
@@ -205,7 +205,7 @@ async def test_private_card_preview_preserves_public_disclosure(service, users, 
         assert session.scalar(select(func.count()).select_from(DeveloperAudit)) == 0
 
     await harness.update(1, "/find")
-    assert "ТЕСТОВАЯ АНКЕТА" in harness.photos_sent()[-1].caption
+    assert "ДЕМО-ПРОФИЛЬ БОТА" in harness.photos_sent()[-1].caption
     public_text = harness.photos_sent()[-1].caption + harness.sent()[-1].text
     assert "Источник фото" in public_text
     await harness.bot.session.close()

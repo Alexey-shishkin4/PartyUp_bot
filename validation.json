@@ -1,7 +1,7 @@
 {
-  "date": "2026-11-17",
+  "date": "2026-11-20",
   "python": "3.10.6",
-  "automated_tests": 135,
+  "automated_tests": 140,
   "test_result": "passed",
   "ruff": "passed",
   "javascript_syntax": "passed",
@@ -27,6 +27,15 @@
   },
   "deployment": "local demo on port 8765; live Telegram bot running from local port 8766; no public hosting configured",
   "known_test_warning": "Starlette TestClient deprecates its httpx adapter; tests pass",
+  "telegram_ux": [
+    "short registration with preview",
+    "per-field profile edits",
+    "card editing",
+    "undo last skip",
+    "one-off alerts for real candidates",
+    "temporary game search",
+    "consented Telegram username exchange on mutual match"
+  ],
   "profile_photos": {
     "registration_upload": "tested with Telegram fixtures",
     "replace_remove": "passed",
@@ -58,7 +67,7 @@
     "count": 5,
     "photo_source": "five user-selected Pinterest pins recorded in data/test_profiles.json",
     "command": "/test",
-    "labels": "fictional names, ages and interests; illustrative photos",
+    "labels": "explicit demo-bot title; fictional data and illustrative photos; no real conversation or mutual match; short photo captions retain title",
     "regular_search": "labelled static test cards honour the same filters as real profiles",
     "automated_replies": false,
     "fake_match_prevention": "passed",

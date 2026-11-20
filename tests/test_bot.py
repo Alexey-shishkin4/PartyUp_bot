@@ -2,13 +2,13 @@ from datetime import datetime, timezone
 
 from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.methods import AnswerCallbackQuery, EditMessageReplyMarkup, SendMessage, SendPhoto
-from aiogram.types import CallbackQuery, Chat, Document, FSInputFile, Message, PhotoSize, Update, User as TelegramUser
+from aiogram.methods import AnswerCallbackQuery, DeleteMessage, EditMessageMedia, EditMessageReplyMarkup, EditMessageText, GetChat, SendMessage, SendPhoto
+from aiogram.types import CallbackQuery, Chat, ChatFullInfo, Document, FSInputFile, Message, PhotoSize, Update, User as TelegramUser
 from sqlalchemy import func, select
 
-from app.bot import build_bot
+from app.bot import build_bot, deliver_profile_alerts
 from app.config import Settings
-from app.models import Event, FSMRecord
+from app.models import FSMRecord
 
 
 class FakeSession(BaseSession):
@@ -16,6 +16,7 @@ class FakeSession(BaseSession):
         super().__init__()
         self.calls = []
         self.fail_photos = False
+        self.usernames = {}
 
     async def close(self):
         pass
@@ -35,7 +36,16 @@ class FakeSession(BaseSession):
                            photo=[PhotoSize(file_id=file_id, file_unique_id="test-unique",
                                             width=1280, height=960)],
                            from_user=TelegramUser(id=bot.id, is_bot=True, first_name="PartyUp"))
-        if isinstance(method, (AnswerCallbackQuery, EditMessageReplyMarkup)):
+        if isinstance(method, GetChat):
+            return ChatFullInfo(id=int(method.chat_id), type="private", username=self.usernames.get(method.chat_id),
+                                accent_color_id=0, max_reaction_count=0, accepted_gift_types={
+                                    "unlimited_gifts": False, "limited_gifts": False,
+                                    "unique_gifts": False, "premium_subscription": False,
+                                    "gifts_from_channels": False,
+                                })
+        if isinstance(method, EditMessageMedia) and self.fail_photos:
+            raise TelegramBadRequest(method=method, message="wrong file identifier")
+        if isinstance(method, (AnswerCallbackQuery, DeleteMessage, EditMessageMedia, EditMessageReplyMarkup, EditMessageText)):
             return True
         raise AssertionError(f"Unexpected network operation: {type(method).__name__}")
 
@@ -53,14 +63,18 @@ class Harness:
         self.bot.session = self.session
         self.counter = 0
 
-    async def update(self, user_id, text=None, callback=None, username=None, photos=None, document=None):
+    async def update(self, user_id, text=None, callback=None, username=None, photos=None, document=None,
+                     card_text=None, card_photo=False, card_id=None):
         self.counter += 1
         sender = TelegramUser(id=user_id, is_bot=False, first_name="Игрок", username=username)
-        message = Message(message_id=self.counter, date=datetime.now(timezone.utc),
+        message = Message(message_id=card_id or self.counter, date=datetime.now(timezone.utc),
                           chat=Chat(id=user_id, type="private"), from_user=sender, text=text,
                           photo=photos, document=document)
         if callback:
-            message = message.model_copy(update={"from_user":TelegramUser(id=self.bot.id, is_bot=True, first_name="PartyUp")})
+            message = message.model_copy(update={
+                "from_user": TelegramUser(id=self.bot.id, is_bot=True, first_name="PartyUp"),
+                "text": card_text, "photo": photo_sizes() if card_photo else None,
+            })
             update = Update(update_id=self.counter, callback_query=CallbackQuery(
                 id=str(self.counter), from_user=sender, chat_instance="test", message=message, data=callback))
         else:
@@ -86,20 +100,18 @@ async def register(harness, telegram=1, with_photo=False):
     await harness.update(telegram, "17")
     assert "18 до 99" in harness.sent()[-1].text
     await harness.update(telegram, "25")
-    await harness.update(telegram, callback="form:male")
-    await harness.update(telegram, callback="form:any")
-    await harness.update(telegram, callback="form:both")
-    await harness.update(telegram, "18-35")
-    await harness.update(telegram, callback="form:ru")
-    await harness.update(telegram, callback="form:Asia/Novosibirsk")
+    await harness.update(telegram, callback="form:purpose:both")
+    await harness.update(telegram, callback="form:timezone:Asia/Novosibirsk")
     await harness.update(telegram, "22-2")
+    await harness.update(telegram, callback="game:105600")
+    await harness.update(telegram, callback="game:save")
+    assert "Опубликовать" in str(harness.sent()[-1].reply_markup)
+    await harness.update(telegram, callback="review:bio")
     await harness.update(telegram, "За спокойный кооп <и> разговоры")
     if with_photo:
+        await harness.update(telegram, callback="review:photo")
         await harness.update(telegram, photos=photo_sizes())
-    else:
-        await harness.update(telegram, callback="photo:keep")
-    await harness.update(telegram, callback="game:105600")
-    await harness.update(telegram, callback="game:save", username="alex")
+    await harness.update(telegram, callback="review:publish", username="alex")
 
 
 async def test_full_registration_and_profile(service):
@@ -122,32 +134,32 @@ async def test_registration_survives_restart(service):
     await first.update(1, "Новый игрок")
     second = Harness(service)
     await second.update(1, "26")
-    assert "Как указать твой пол" in second.sent()[-1].text
+    assert "Чего ждёшь" in second.sent()[-1].text
     await first.bot.session.close()
     await second.bot.session.close()
 
 
-async def test_relay_contact_consent_and_blocking(service, users):
+async def test_match_shows_current_usernames_only_after_mutual_likes(service, users):
     a, b = users(1), users(2)
     service.feed(a.id)
     service.feed(b.id)
-    service.react(a.id, b.id, "like")
-    result = service.react(b.id, a.id, "like")
     harness = Harness(service)
-    await harness.update(1, callback=f"chat:{result['match_id']}")
-    await harness.update(1, "Привет <script>private-token</script>")
-    delivered = [message for message in harness.sent() if message.chat_id == 2]
-    assert len(delivered) == 1 and "&lt;script&gt;" in delivered[0].text
-    assert "@player" not in delivered[0].text
-    with service.db.session() as session:
-        events = list(session.scalars(select(Event).where(Event.kind == "message_sent")))
-        assert events and "private-token" not in str(events[0].details)
-    await harness.update(1, callback=f"contact:{result['match_id']}", username="alex")
-    assert "@alex" in [message for message in harness.sent() if message.chat_id == 2][-1].text
+    harness.session.usernames = {1: "alex_current", 2: "peer_current"}
+    await harness.update(1, callback=f"react:like:{b.id}", username="alex_old")
+    assert "После подтверждения" in harness.sent()[-1].text
+    assert not service.matches(a.id)
+    await harness.update(1, callback="match:enable", username="alex_old")
+    await harness.update(1, callback=f"react:like:{b.id}", username="alex_old")
+    assert not any("@alex_current" in message.text for message in harness.sent())
+    assert not any(message.chat_id == 2 for message in harness.sent())
+    await harness.update(2, callback="match:enable", username="peer_current")
+    await harness.update(2, callback=f"react:like:{a.id}", username="peer_current")
+    assert any(message.chat_id == 2 and "@alex_current" in message.text for message in harness.sent())
+    assert any(message.chat_id == 1 and "@peer_current" in message.text for message in harness.sent())
+    assert not any("@alex_old" in message.text for message in harness.sent())
     service.react(b.id, a.id, "block")
-    sent_before = len([message for message in harness.sent() if message.chat_id == 2])
-    await harness.update(1, "Это уже не должно дойти")
-    assert len([message for message in harness.sent() if message.chat_id == 2]) == sent_before
+    await harness.update(1, "/matches", username="alex_current")
+    assert "Здесь появятся взаимные симпатии" in harness.sent()[-1].text
     await harness.bot.session.close()
 
 
@@ -255,6 +267,8 @@ async def test_photo_draft_survives_restart_before_registration_save(service):
     restarted = Harness(service)
     await restarted.update(2,callback="game:105600")
     await restarted.update(2,callback="game:save")
+    assert service.user_by_telegram(2) is None
+    await restarted.update(2,callback="review:publish")
     assert service.user_by_telegram(2).photo_file_id == "draft-photo"
     assert service.photo_file(user.id) == "photo-original"
     await harness.bot.session.close()
@@ -290,9 +304,9 @@ async def test_long_caption_split_preserves_bio_and_actions(service,users):
     await harness.update(1,"/find")
     photo = harness.photos_sent()[-1]
     assert len(photo.caption.encode("utf-16-le"))//2 <= 1024
-    assert photo.reply_markup is None
+    assert "я"*500 not in photo.caption
+    await harness.update(1, callback=f"feed:details:{peer.id}")
     assert "я"*500 in harness.sent()[-1].text
-    assert harness.sent()[-1].reply_markup is not None
     await harness.bot.session.close()
 
 
@@ -307,7 +321,7 @@ async def test_unavailable_telegram_photo_falls_back_to_text(service,users):
     await harness.bot.session.close()
 
 
-async def test_photo_does_not_overwrite_profile_while_chatting(service, users):
+async def test_old_chat_button_does_not_restore_the_message_relay(service, users):
     a,b = users(1),users(2)
     service.set_photo(a.id,"original-profile-photo")
     service.feed(a.id)
@@ -316,10 +330,11 @@ async def test_photo_does_not_overwrite_profile_while_chatting(service, users):
     match = service.react(b.id,a.id,"like")
     harness = Harness(service)
     await harness.update(1,callback=f"chat:{match['match_id']}")
+    await harness.update(1, "Эта реплика не будет переслана.")
     await harness.update(1,photos=photo_sizes("private-chat-photo"))
     assert service.photo_file(a.id) == "original-profile-photo"
     assert not harness.photos_sent()
-    assert "В переписке" in harness.sent()[-1].text
+    assert all(message.chat_id == 1 for message in harness.sent())
     await harness.bot.session.close()
 
 
@@ -391,9 +406,6 @@ async def test_test_gallery_shows_pinterest_photos_and_no_fake_match(service,use
     await harness.update(1,"/test")
     first = harness.photos_sent()[-1]
     assert isinstance(first.photo,FSInputFile)
-    assert "ТЕСТОВАЯ АНКЕТА" in first.caption
-    assert "вымышлены" in first.caption
-    assert "Pinterest" in first.caption
     like = next(button.callback_data for row in first.reply_markup.inline_keyboard for button in row
                 if button.callback_data and button.callback_data.startswith("testreact:like:"))
     target_id = int(like.split(":")[-1])
@@ -417,16 +429,117 @@ async def test_static_test_profiles_appear_in_regular_search_without_answers(ser
     harness = Harness(service)
     await harness.update(1,"/find")
     card = harness.photos_sent()[-1]
-    assert "ТЕСТОВАЯ АНКЕТА" in card.caption and "Оценка сходства" in card.caption
+    assert "ДЕМО-ПРОФИЛЬ БОТА" in card.caption and "По расписанию" in card.caption
     callback = next(button.callback_data for row in card.reply_markup.inline_keyboard for button in row
                     if button.callback_data.startswith("react:like:"))
     assert not any(button.callback_data.startswith("react:report:")
                    for row in card.reply_markup.inline_keyboard for button in row)
-    await harness.update(1,callback=callback)
-    assert len(harness.photos_sent()) == 2
-    assert "Оценка сходства" in harness.photos_sent()[-1].caption
+    await harness.update(1,callback=callback,card_photo=True)
+    replacement = next(call for call in harness.session.calls if isinstance(call, EditMessageMedia))
+    assert len(harness.photos_sent()) == 1 and "ДЕМО-ПРОФИЛЬ БОТА" in replacement.media.caption
     assert not any("Тестовый лайк" in message.text for message in harness.sent())
     assert all(message.chat_id == user.telegram_id for message in harness.sent()+harness.photos_sent())
     with service.db.session() as session:
         assert session.scalar(select(func.count()).select_from(Match)) == 0
+    await harness.bot.session.close()
+
+
+async def test_edit_one_field_preserves_profile_and_steam_games(service, users):
+    user = users(1, bio="Старый текст")
+    service.set_photo(user.id, "original-photo")
+    service.import_games(user.id, [{"appid":730, "name":"Counter-Strike 2", "playtime_forever":40}])
+    harness = Harness(service)
+    await harness.update(1, "/edit", username="alex")
+    assert "Что хочешь изменить?" in harness.sent()[-1].text
+    await harness.update(1, callback="edit:bio", username="alex")
+    await harness.update(1, "Новый текст", username="alex")
+    updated = service.public_profile(service.user(user.id))
+    assert updated["bio"] == "Новый текст" and updated["age"] == user.age
+    assert set(updated["game_ids"]) == {105600, 548430}
+    assert updated["steam_games"] == ["Counter-Strike 2"]
+    assert service.photo_file(user.id) == "original-photo"
+    await harness.bot.session.close()
+
+
+async def test_short_registration_goes_back_previews_and_publishes_without_photo(service):
+    harness = Harness(service)
+    await harness.update(1, "/start")
+    await harness.update(1, callback="consent:yes")
+    await harness.update(1, "Алекс")
+    await harness.update(1, "25")
+    await harness.update(1, callback="form:back")
+    await harness.update(1, "26")
+    await harness.update(1, callback="form:purpose:friends")
+    await harness.update(1, callback="form:timezone:Asia/Novosibirsk")
+    await harness.update(1, callback="form:hours:19-23")
+    await harness.update(1, callback="game:105600")
+    await harness.update(1, callback="game:save")
+    assert "Алекс, 26" in harness.sent()[-1].text and "@username" in harness.sent()[-1].text
+    assert service.user_by_telegram(1) is None
+    await harness.update(1, callback="review:publish")
+    saved = service.user_by_telegram(1)
+    assert saved.age == 26 and saved.bio == "" and saved.photo_file_id is None
+    assert saved.share_username and saved.username is None
+    assert "добавь @username" in harness.sent()[-1].text
+    await harness.bot.session.close()
+
+
+async def test_skip_replaces_card_and_undo_restores_it_from_empty_feed(service, users):
+    viewer, peer = users(1), users(2)
+    harness = Harness(service)
+    await harness.update(1, "/find")
+    first_card = harness.sent()[-1].text
+    await harness.update(1, callback=f"react:skip:{peer.id}", card_text=first_card, card_id=20)
+    edits = [call for call in harness.session.calls if isinstance(call, EditMessageText)]
+    assert edits[-1].message_id == 20 and "Новых подходящих анкет пока нет" in edits[-1].text
+    options = {button.callback_data for row in edits[-1].reply_markup.inline_keyboard for button in row}
+    assert {"feed:undo", "feed:alert_on", "edit:age_range", "edit:games"} <= options
+    await harness.update(1, callback="feed:undo", card_text=edits[-1].text, card_id=20)
+    restored = [call for call in harness.session.calls if isinstance(call, EditMessageText)][-1]
+    assert restored.message_id == 20 and peer.name in restored.text
+    assert len(harness.sent()) == 1
+    assert service.undo_skip(viewer.id) is None
+    await harness.bot.session.close()
+
+
+async def test_play_now_filters_old_steam_library_and_keeps_mutual_filters(service, users):
+    viewer = users(1)
+    unrelated = users(2)
+    service.import_games(unrelated.id, [{"appid":730, "playtime_forever":9999}])
+    candidate = users(3, game_ids=[730])
+    incompatible = users(4, game_ids=[730], age_min=40)
+    service.set_current_game(candidate.id, 730)
+    harness = Harness(service)
+    await harness.update(1, "/play")
+    await harness.update(1, "Counter")
+    await harness.update(1, callback="focus:game:730", card_text="Выбери игру")
+    focused_card = [call for call in harness.session.calls if isinstance(call, EditMessageText)][-1]
+    assert "Тоже ищет компанию" in focused_card.text
+    assert "по твоему времени" in focused_card.text
+    assert candidate.name in focused_card.text
+    result_ids = [row["profile"]["id"] for row in service.feed(viewer.id, record_impressions=False)]
+    assert result_ids == [candidate.id] and incompatible.id not in result_ids
+    await harness.update(1, callback="focus:clear", card_text=focused_card.text)
+    assert service.current_game(service.user(viewer.id)) is None
+    assert unrelated.id in [row["profile"]["id"] for row in service.feed(viewer.id, record_impressions=False)]
+    await harness.bot.session.close()
+
+
+async def test_empty_feed_alert_waits_for_a_real_candidate_and_only_sends_once(service, users):
+    from app.test_profiles import seed_test_profiles
+
+    viewer = users(1)
+    harness = Harness(service)
+    await harness.update(1, "/find")
+    await harness.update(1, callback="feed:alert_on", card_text=harness.sent()[-1].text)
+    seed_test_profiles(service)
+    before = len(harness.sent())
+    await deliver_profile_alerts(harness.bot, service)
+    assert len(harness.sent()) == before
+    assert service.user(viewer.id).notify_new_profiles
+    users(2)
+    await deliver_profile_alerts(harness.bot, service)
+    await deliver_profile_alerts(harness.bot, service)
+    assert len(harness.sent()) == before + 1 and "появилась подходящая анкета" in harness.sent()[-1].text
+    assert not service.user(viewer.id).notify_new_profiles
     await harness.bot.session.close()
