@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +20,7 @@ class Settings(BaseSettings):
     data_location: str = "локальный компьютер владельца"
     operator_contact: str = "администратор бота"
     database_url: str = ""
+    data_dir: Path = ROOT / "data"
     host: str = "127.0.0.1"
     port: int = Field(default=8765, ge=1, le=65535)
 
@@ -36,7 +38,17 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_url(self):
         self.public_url = self.public_url.rstrip("/")
-        if self.steam_mode == "openid" and not self.public_url.startswith("https://"):
+        try:
+            parsed = urlsplit(self.public_url)
+            valid = (parsed.scheme in {"http", "https"} and parsed.hostname
+                     and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment)
+            if parsed.port is not None and not 0 < parsed.port <= 65535:
+                valid = False
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("PUBLIC_URL должен быть HTTP(S)-адресом без пароля, query-параметров и фрагмента")
+        if self.steam_mode == "openid" and parsed.scheme != "https":
             raise ValueError("Для Steam OpenID укажите PUBLIC_URL с HTTPS в .env")
         return self
 
@@ -56,6 +68,6 @@ class Settings(BaseSettings):
     def db_url(self) -> str:
         if self.database_url:
             return self.database_url
-        directory = ROOT / "data"
-        directory.mkdir(exist_ok=True)
+        directory = self.data_dir.expanduser().resolve()
+        directory.mkdir(parents=True, exist_ok=True)
         return "sqlite:///" + (directory / ("demo.sqlite3" if self.demo else "bot.sqlite3")).as_posix()

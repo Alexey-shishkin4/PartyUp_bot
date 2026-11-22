@@ -1,17 +1,19 @@
 import hashlib
 import secrets
 import threading
-from datetime import timedelta
+from datetime import timedelta, timezone
 
+from pydantic import ValidationError
 from sqlalchemy import delete, func, or_, select
 
 from .db import Database
-from .models import Block, Event, FSMRecord, Game, LoginTicket, Match, Reaction, Report, User, UserGame, utcnow
-from .recommender import AffinityModel, compatible, score
-from .schemas import ProfileInput
+from .models import Block, Event, FSMRecord, Game, LoginTicket, Match, ProfileSequence, Reaction, Report, TelegramBan, User, UserGame, utcnow
+from .recommender import AffinityModel, compatible, prepare, score
+from .schemas import ImportedGame, ProfileInput
 
 PURPOSES = {"friends": "Друзья и тиммейты", "romance": "Отношения", "both": "Общение и отношения"}
 PHOTO_UNCHANGED = object()
+CANDIDATE_LIMIT = 2000
 
 
 def digest(value: str) -> str:
@@ -36,13 +38,18 @@ class Service:
         with self.db.session() as session:
             return session.get(User, user_id)
 
+    def is_banned(self, telegram_id: int):
+        with self.db.session() as session:
+            return (session.get(TelegramBan, telegram_id) is not None or session.scalar(
+                select(User.id).where(User.telegram_id == telegram_id, User.banned.is_(True))) is not None)
+
     def save_profile(self, telegram_id: int, profile: ProfileInput | None, username=None, demo=False,
                      photo_file_id=PHOTO_UNCHANGED, test_profile=False, *, share_username=None, changes=None):
         if photo_file_id is not PHOTO_UNCHANGED:
             self.validate_photo(photo_file_id)
         with self.lock, self.db.session.begin() as session:
             user = session.scalar(select(User).where(User.telegram_id == telegram_id))
-            if user and user.banned:
+            if (user and user.banned) or session.get(TelegramBan, telegram_id):
                 raise DomainError("Анкета заблокирована модератором")
             if user and user.is_test != test_profile:
                 raise DomainError("Обычные и тестовые анкеты редактируются отдельно")
@@ -57,7 +64,10 @@ class Service:
                 raise DomainError("Одна из выбранных игр отсутствует в каталоге")
             values = profile.model_dump(exclude={"game_ids"})
             if user is None:
-                user = User(telegram_id=telegram_id, is_demo=demo, is_test=test_profile, **values)
+                sequence = session.get(ProfileSequence, 1)
+                next_id = max(sequence.next_id, (session.scalar(select(func.max(User.id))) or 0) + 1)
+                sequence.next_id = next_id + 1
+                user = User(id=next_id, telegram_id=telegram_id, is_demo=demo, is_test=test_profile, **values)
                 session.add(user)
                 session.flush()
             else:
@@ -87,8 +97,8 @@ class Service:
             return user
 
     @staticmethod
-    def current_game(user):
-        if user.looking_until and user.looking_until > utcnow():
+    def current_game(user, now=None):
+        if user.looking_until and user.looking_until > (now or utcnow()):
             return user.looking_for_game
         return None
 
@@ -194,27 +204,38 @@ class Service:
 
     def feed(self, actor_id: int, limit=10, test_only=False, record_impressions=True, *,
              real_only=False, availability_only=False, preferred_id=None):
+        timestamp = utcnow()
+        now = timestamp.replace(tzinfo=timezone.utc)
         with self.lock, self.db.session.begin() as session:
             actor = session.get(User, actor_id)
             if not actor or actor.banned or actor.is_test or (not actor.active and not test_only):
                 return False if availability_only else []
             if record_impressions:
-                actor.last_active = utcnow()
-            reacted = set(session.scalars(select(Reaction.target_id).where(Reaction.actor_id == actor_id)))
-            blocks = session.scalars(select(Block).where(or_(Block.actor_id == actor_id, Block.target_id == actor_id)))
-            excluded = reacted | {actor_id}
-            for block in blocks:
-                excluded.add(block.target_id if block.actor_id == actor_id else block.actor_id)
+                actor.last_active = timestamp
+            reacted = select(Reaction.target_id).where(Reaction.actor_id == actor_id)
+            blocked = select(Block.target_id).where(Block.actor_id == actor_id)
+            blocked_by = select(Block.actor_id).where(Block.target_id == actor_id)
             query = select(User).where(
                 User.active.is_(True), User.banned.is_(False), User.is_demo == actor.is_demo,
-                User.id.not_in(excluded), User.last_active >= utcnow() - timedelta(days=30),
+                User.id != actor_id, User.id.not_in(reacted), User.id.not_in(blocked), User.id.not_in(blocked_by),
+                User.last_active >= timestamp - timedelta(days=30),
             )
             focus = None
             if test_only:
                 query = query.where(User.is_test.is_(True))
             else:
-                query = query.where(User.age.between(actor.age_min,actor.age_max),User.language == actor.language)
-                focus = self.current_game(actor)
+                # Apply mutual filters before the shortlist, otherwise recent
+                # incompatible profiles can hide every compatible candidate.
+                query = query.where(
+                    User.age.between(actor.age_min, actor.age_max), User.language == actor.language,
+                    User.age_min <= actor.age, User.age_max >= actor.age,
+                    or_(User.looking_for == "any", User.looking_for == actor.gender),
+                )
+                if actor.looking_for != "any":
+                    query = query.where(User.gender == actor.looking_for)
+                if actor.purpose != "both":
+                    query = query.where(User.purpose.in_([actor.purpose, "both"]))
+                focus = self.current_game(actor, timestamp)
                 if focus is not None:
                     plays_game = select(UserGame.user_id).where(
                         UserGame.app_id == focus,
@@ -222,27 +243,42 @@ class Service:
                     )
                     query = query.where(
                         User.is_test.is_(False),
-                        or_(User.id.in_(plays_game), (User.looking_for_game == focus) & (User.looking_until > utcnow())),
+                        or_(User.id.in_(plays_game), (User.looking_for_game == focus) & (User.looking_until > timestamp)),
                     )
             if real_only:
                 query = query.where(User.is_test.is_(False))
             if preferred_id is not None:
                 query = query.where(User.id == preferred_id)
-            candidates = session.scalars(query.order_by(User.last_active.desc()).limit(2000))
             if availability_only:
-                return any(compatible(actor, candidate) for candidate in candidates)
-            ranked = [
-                dict(profile=self.public_profile(candidate), **score(actor, candidate, self.model),
-                     same_game_now=focus is not None and self.current_game(candidate) == focus)
-                for candidate in candidates if test_only or compatible(actor, candidate)
-            ]
-            ranked.sort(key=lambda row: (not row["same_game_now"], -row["score"], row["profile"]["id"]))
-            for position, row in enumerate(ranked[:limit]):
-                if record_impressions:
-                    session.add(Event(actor_id=actor_id, target_id=row["profile"]["id"], kind="test_impression" if row["profile"]["is_test"] else "impression",
+                if test_only:
+                    return any(compatible(actor, candidate) for candidate in session.scalars(query))
+                return session.scalar(query.with_only_columns(User.id).limit(1)) is not None
+            candidates = list(session.scalars(query.order_by(User.last_active.desc(), User.id).limit(CANDIDATE_LIMIT)))
+        # ORM snapshots already have their games loaded. Rank outside both the
+        # write transaction and the service lock; serialize only selected cards.
+        prepared = prepare(actor, now)
+        ranked = [dict(user=candidate, **score(actor, candidate, self.model, now, prepared_a=prepared),
+                       same_game_now=focus is not None and self.current_game(candidate, timestamp) == focus)
+                  for candidate in candidates if test_only or compatible(actor, candidate)]
+        ranked.sort(key=lambda row: (not row["same_game_now"], -row["score"], row["user"].id))
+        selected = ranked[:limit]
+        if record_impressions and selected:
+            with self.lock, self.db.session.begin() as session:
+                current = session.get(User, actor_id)
+                if not current or current.banned or (not current.active and not test_only):
+                    return []
+                available = set(session.scalars(query.with_only_columns(User.id).where(
+                    User.id.in_([row["user"].id for row in selected]))))
+                selected = [row for row in selected if row["user"].id in available]
+                for position, row in enumerate(selected):
+                    session.add(Event(actor_id=actor_id, target_id=row["user"].id,
+                                      kind="test_impression" if row["user"].is_test else "impression",
                                       details={"position": position, "algorithm": row["algorithm"],
                                                "model": row["model"], "score": row["score"]}))
-            return ranked[:limit]
+        for row in selected:
+            candidate = row.pop("user")
+            row["profile"] = self.public_profile(candidate)
+        return selected
 
     def reset_test_reactions(self,user_id):
         with self.lock,self.db.session.begin() as session:
@@ -359,10 +395,44 @@ class Service:
             user.last_active = utcnow()
             return user.active
 
+    @staticmethod
+    def apply_ban(session, user, banned):
+        user.banned = banned
+        record = session.get(TelegramBan, user.telegram_id)
+        if banned:
+            if record is None:
+                session.add(TelegramBan(telegram_id=user.telegram_id))
+            for report in session.scalars(select(Report).where(Report.target_id == user.id)):
+                report.resolved = True
+        elif record is not None:
+            session.delete(record)
+
+    def moderate(self, identifier: int, banned: bool, *, telegram=False):
+        with self.lock, self.db.session.begin() as session:
+            user = (session.scalar(select(User).where(User.telegram_id == identifier))
+                    if telegram else session.get(User, identifier))
+            if user is not None:
+                self.apply_ban(session, user, banned)
+            elif telegram:
+                record = session.get(TelegramBan, identifier)
+                if banned and record is None:
+                    session.add(TelegramBan(telegram_id=identifier))
+                elif not banned and record is not None:
+                    session.delete(record)
+            else:
+                raise DomainError("Анкета не найдена. Для Telegram ID используй tg:ID")
+
+    def banned_accounts(self, limit=20):
+        with self.db.session() as session:
+            return list(session.scalars(select(TelegramBan.telegram_id).order_by(
+                TelegramBan.created_at.desc(), TelegramBan.telegram_id).limit(limit)))
+
     def delete_user(self, telegram_id: int):
         with self.lock, self.db.session.begin() as session:
             user = session.scalar(select(User).where(User.telegram_id == telegram_id))
             if user:
+                if user.banned:
+                    self.apply_ban(session, user, True)
                 session.delete(user)
             session.execute(delete(FSMRecord).where(FSMRecord.telegram_id == telegram_id))
 
@@ -408,6 +478,8 @@ class Service:
             ))
             if duplicate:
                 raise DomainError("Этот Steam уже подключён к другой анкете")
+            if user.steam_id != steam_id:
+                self.clear_steam_import(user)
             user.steam_id = steam_id
             user.steam_verified = True
             session.execute(delete(LoginTicket).where(LoginTicket.user_id == user_id))
@@ -423,20 +495,42 @@ class Service:
             if not user or user.banned or user.is_demo:
                 raise DomainError("Добавление ссылки Steam недоступно")
             if user.steam_id != steam_id:
-                for entry in list(user.games):
-                    if entry.imported:
-                        if entry.selected:
-                            entry.imported = False
-                            entry.minutes = entry.recent_minutes = 0
-                        else:
-                            user.games.remove(entry)
-                user.steam_checked_at = None
-                user.steam_import_status = "not_loaded"
+                self.clear_steam_import(user)
                 user.steam_verified = False
+                session.execute(delete(LoginTicket).where(LoginTicket.user_id == user_id))
             user.steam_id = steam_id
+
+    @staticmethod
+    def clear_steam_import(user):
+        for entry in list(user.games):
+            if entry.imported:
+                if entry.selected:
+                    entry.imported = False
+                    entry.minutes = entry.recent_minutes = 0
+                else:
+                    user.games.remove(entry)
+        user.steam_checked_at = None
+        user.steam_import_status = "not_loaded"
 
     def import_games(self, user_id: int, games: list[dict], expected_steam_id: str | None = None,
                      complete: bool = True):
+        # Validate the complete response before removing an older snapshot.
+        # Duplicate rows occur in external data; combine them by Steam AppID.
+        if not isinstance(games, list):
+            raise DomainError("Steam вернул некорректный список игр; предыдущий импорт сохранён")
+        normalized = {}
+        try:
+            for raw in games:
+                row = ImportedGame.model_validate(raw).model_dump()
+                if row["appid"] in normalized:
+                    previous = normalized[row["appid"]]
+                    for key in ("playtime_forever", "playtime_2weeks"):
+                        row[key] = max(row[key], previous[key])
+                    row["name"] = row["name"] or previous["name"]
+                normalized[row["appid"]] = row
+        except ValidationError:
+            raise DomainError("Steam вернул некорректные данные игр; предыдущий импорт сохранён") from None
+        games = list(normalized.values())
         with self.lock, self.db.session.begin() as session:
             user = session.get(User, user_id)
             if not user or user.banned:
@@ -455,7 +549,7 @@ class Service:
             for row in games:
                 app_id = row["appid"]
                 if not session.get(Game, app_id):
-                    session.add(Game(app_id=app_id, name=row.get("name", f"Steam {app_id}"),
+                    session.add(Game(app_id=app_id, name=row["name"] or f"Steam {app_id}",
                                      genres=[], aliases=[], coop=False))
                     session.flush()
                 entry = entries.get(app_id)
@@ -486,15 +580,7 @@ class Service:
                 raise DomainError("Анкета недоступна")
             user.steam_id = None
             user.steam_verified = False
-            user.steam_checked_at = None
-            user.steam_import_status = "not_loaded"
-            for entry in list(user.games):
-                if entry.imported:
-                    if entry.selected:
-                        entry.imported = False
-                        entry.minutes = entry.recent_minutes = 0
-                    else:
-                        user.games.remove(entry)
+            self.clear_steam_import(user)
             session.execute(delete(LoginTicket).where(LoginTicket.user_id == user_id))
 
     def record(self, actor_id: int, target_id: int, kind: str, details=None):

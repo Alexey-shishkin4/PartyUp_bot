@@ -17,7 +17,7 @@ from aiogram.types import BotCommand, BotCommandScopeChat, FSInputFile, InlineKe
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from .models import Report, User, utcnow
+from .models import Report, utcnow
 from .config import ROOT
 from .schemas import ProfileInput
 from .service import DomainError, PHOTO_UNCHANGED, PURPOSES
@@ -362,7 +362,7 @@ def build_bot(service, settings, steam, public_steam=None):
             pass
 
     async def show_feed(message, user, *, replace=False, preferred_id=None, allow_undo=False):
-        rows = service.feed(user.id, limit=1, preferred_id=preferred_id)
+        rows = await asyncio.to_thread(service.feed, user.id, limit=1, preferred_id=preferred_id)
         focus = service.current_game(user)
         focus_game = next((game.name for game in service.db.catalog() if game.app_id == focus), None) if focus else None
         focus_text = f"🎮 Хочу сыграть в {escape(focus_game)}\n\n" if focus_game else ""
@@ -454,7 +454,7 @@ def build_bot(service, settings, steam, public_steam=None):
             ]))
 
     async def show_test_feed(message,user):
-        rows = service.feed(user.id,limit=1,test_only=True)
+        rows = await asyncio.to_thread(service.feed, user.id, limit=1, test_only=True)
         if not rows:
             await message.answer("Тестовые анкеты просмотрены.",reply_markup=buttons([
                 [("Посмотреть сначала", "test:restart")]
@@ -482,6 +482,8 @@ def build_bot(service, settings, steam, public_steam=None):
             f"Хранение: {escape(settings.data_location)}. Контакт: {escape(settings.operator_contact)}.\n"
             "Анкеты без активности 30 дней скрываются. /pause — пауза, /steam — отключение Steam, "
             "/photo — заменить или убрать фото, /delete — удаление анкеты и связанных записей из рабочей БД. "
+            "При модераторской блокировке сохраняем Telegram ID и дату блокировки до её отмены; "
+            "пересоздание анкеты не снимает блокировку. "
             "Сами фото хранятся в Telegram; при удалении из анкеты убирается наша ссылка на фото. "
             "Доставленные сообщения и фото у адресатов остаются. "
             "Если оператор делает резервные копии, срок их удаления должен быть указан им отдельно."
@@ -536,6 +538,10 @@ def build_bot(service, settings, steam, public_steam=None):
 
     @router.message(CommandStart())
     async def start(message, state: FSMContext):
+        if service.is_banned(message.from_user.id):
+            await state.clear()
+            await message.answer("Анкета заблокирована модератором. Удалить данные: /delete")
+            return
         user = service.update_telegram_account(message.from_user.id, message.from_user.username)
         if user:
             await state.clear()
@@ -823,7 +829,7 @@ def build_bot(service, settings, steam, public_steam=None):
                 await callback.answer("Можно вернуть только последний пропуск.", show_alert=True)
                 return
             await callback.answer("Пропуск отменён")
-            if service.feed(user.id, limit=1, record_impressions=False, preferred_id=target):
+            if await asyncio.to_thread(service.feed, user.id, limit=1, record_impressions=False, preferred_id=target):
                 await show_feed(message, user, replace=True, preferred_id=target)
             else:
                 await message.answer("Анкета больше не подходит под текущий поиск или недоступна.")
@@ -853,7 +859,7 @@ def build_bot(service, settings, steam, public_steam=None):
             await show_feed(message, service.user(user.id), replace=True)
         elif action == "details" and args:
             target = int(args[0])
-            entries = service.feed(user.id, limit=1, record_impressions=False, preferred_id=target)
+            entries = await asyncio.to_thread(service.feed, user.id, limit=1, record_impressions=False, preferred_id=target)
             if entries:
                 profile = entries[0]["profile"]
                 await message.answer(profile_text(profile))
@@ -1065,17 +1071,28 @@ def build_bot(service, settings, steam, public_steam=None):
         if message.from_user.id not in settings.admins:
             return
         parts = message.text.split()
-        if len(parts) != 2 or not parts[1].isdigit():
-            await message.answer("Формат: /ban ID или /unban ID")
+        if len(parts) != 2 or not re.fullmatch(r"(?:tg:)?[0-9]{1,19}", parts[1]):
+            await message.answer("Формат: /ban ID или /unban ID; по Telegram ID — /unban tg:ID")
             return
-        with service.db.session.begin() as session:
-            user = session.get(User, int(parts[1]))
-            if user:
-                user.banned = parts[0].split("@")[0] == "/ban"
-                if user.banned:
-                    for report in session.scalars(select(Report).where(Report.target_id == user.id)):
-                        report.resolved = True
-        await message.answer("Статус обновлён." if user else "Анкета не найдена.")
+        identifier = int(parts[1].removeprefix("tg:"))
+        if not 0 < identifier < 2**63:
+            await message.answer("ID должен быть положительным числом меньше 2⁶³.")
+            return
+        try:
+            service.moderate(identifier, parts[0].split("@")[0] == "/ban", telegram=parts[1].startswith("tg:"))
+        except DomainError as error:
+            await message.answer(escape(str(error)))
+            return
+        await message.answer("Статус обновлён.")
+
+    @router.message(Command("bans"))
+    async def bans(message):
+        if message.from_user.id not in settings.admins:
+            return
+        identifiers = service.banned_accounts()
+        await message.answer("Блокировок нет." if not identifiers else (
+            "Последние блокировки по Telegram ID:\n" + "\n".join(str(value) for value in identifiers)
+            + "\nСнять блокировку, в том числе после удаления анкеты: /unban tg:ID"))
 
     @router.message(Form.step, F.text)
     async def step_text(message, state: FSMContext):
@@ -1179,7 +1196,8 @@ async def deliver_profile_alerts(bot, service):
         user = service.user(user_id)
         if not user or not user.notify_new_profiles:
             continue
-        if not service.feed(user_id, record_impressions=False, real_only=True, availability_only=True):
+        if not await asyncio.to_thread(service.feed, user_id, record_impressions=False,
+                                       real_only=True, availability_only=True):
             continue
         try:
             await bot.send_message(telegram_id, "В твоём поиске появилась подходящая анкета. Открыть подборку — /find.")

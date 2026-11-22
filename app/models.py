@@ -1,11 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def utcnow():
-    return datetime.utcnow()
+    # SQLite stores the existing timestamps without an offset. Keep that format
+    # while avoiding datetime.utcnow(), deprecated since Python 3.12.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Base(DeclarativeBase):
@@ -14,6 +16,7 @@ class Base(DeclarativeBase):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (Index("ix_users_discovery", "is_demo", "active", "banned", "language", "last_active"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True)
     username: Mapped[str | None] = mapped_column(String(64))
@@ -103,6 +106,7 @@ class Report(Base):
 
 class Event(Base):
     __tablename__ = "events"
+    __table_args__ = (Index("ix_events_actor_kind_created", "actor_id", "kind", "created_at"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     actor_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     target_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
@@ -135,3 +139,17 @@ class DeveloperAudit(Base):
     action: Mapped[str] = mapped_column(String(40))
     details: Mapped[dict] = mapped_column(JSON,default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime,default=utcnow)
+
+
+class TelegramBan(Base):
+    """Minimal moderation record, independent of a deletable profile."""
+    __tablename__ = "telegram_bans"
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ProfileSequence(Base):
+    """Never recycle a deleted profile ID referenced by old Telegram buttons."""
+    __tablename__ = "profile_sequence"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    next_id: Mapped[int] = mapped_column(BigInteger)

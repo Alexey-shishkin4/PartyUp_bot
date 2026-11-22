@@ -5,10 +5,11 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8765
+      DATA_DIR: /app/storage
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
-      - partyup-data:/app/data
+      - partyup-data:/app/storage
     restart: unless-stopped
 volumes:
   partyup-data:

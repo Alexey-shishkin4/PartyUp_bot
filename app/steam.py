@@ -67,8 +67,12 @@ class SteamClient:
             )
             response.raise_for_status()
             payload = response.json().get("response", {})
-            if "game_count" not in payload:
+            if not isinstance(payload, dict) or "game_count" not in payload:
                 raise DomainError("Библиотека скрыта или недоступна. Откройте «Доступ к игровой информации» в Steam или выберите игры вручную")
-            return payload.get("games", [])
+            games = payload.get("games", [])
+            count = payload["game_count"]
+            if type(count) is not int or count < 0 or not isinstance(games, list) or len(games) != count:
+                raise DomainError("Steam вернул неполный список игр. Сохранённая библиотека не изменена")
+            return games
         except (httpx.HTTPError, ValueError, AttributeError):
             raise DomainError("Не удалось получить библиотеку Steam. Сохранённые игры остаются доступны") from None

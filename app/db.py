@@ -1,11 +1,11 @@
 import json
 
-from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy import create_engine, event, func, inspect, select, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from .config import ROOT
-from .models import Base, Game
+from .models import Base, Game, ProfileSequence, TelegramBan, User
 
 
 class Database:
@@ -43,9 +43,27 @@ class Database:
                 if column not in existing_columns:
                     connection.execute(text(statement))
         with self.session.begin() as session:
+            sequence = session.get(ProfileSequence, 1)
+            next_id = (session.scalar(select(func.max(User.id))) or 0) + 1
+            if sequence is None:
+                session.add(ProfileSequence(id=1, next_id=next_id))
+            else:
+                sequence.next_id = max(sequence.next_id, next_id)
+            # Preserve bans from installations created before telegram_bans.
+            for telegram_id in session.scalars(select(User.telegram_id).where(User.banned.is_(True))):
+                if session.get(TelegramBan, telegram_id) is None:
+                    session.add(TelegramBan(telegram_id=telegram_id))
             for row in json.loads((ROOT / "data/catalog.json").read_text(encoding="utf-8")):
-                if not session.get(Game, row["app_id"]):
+                game = session.get(Game, row["app_id"])
+                if game is None:
                     session.add(Game(**row))
+                else:
+                    for field, value in row.items():
+                        setattr(game, field, value)
+        # create_all skips indexes of existing tables; upgrade them explicitly.
+        for table in (User.__table__, Base.metadata.tables["events"]):
+            for index in table.indexes:
+                index.create(self.engine, checkfirst=True)
 
     def catalog(self):
         with self.session() as session:

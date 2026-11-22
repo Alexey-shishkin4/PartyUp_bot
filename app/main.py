@@ -109,9 +109,10 @@ def create_app(settings=None, database=None, start_bot=True):
     def health():
         polling = getattr(app.state, "polling", None)
         running = polling is not None and not polling.done()
-        return {"status": "ok" if settings.demo or running or not start_bot else "degraded",
-                "mode": "demo" if settings.demo else "telegram", "bot_running": running,
-                "model": service.model.version}
+        healthy = settings.demo or running or not start_bot
+        return JSONResponse({"status": "ok" if healthy else "degraded",
+                             "mode": "demo" if settings.demo else "telegram", "bot_running": running,
+                             "model": service.model.version}, status_code=200 if healthy else 503)
 
     @app.get("/model", response_class=HTMLResponse)
     def model_info():

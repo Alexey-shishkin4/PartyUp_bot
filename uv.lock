@@ -1255,14 +1255,8 @@ dependencies = [
     { name = "fastapi", version = "0.162.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "fastapi", version = "0.163.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "httpx" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pydantic-settings", version = "2.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pydantic-settings", version = "2.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "sqlalchemy" },
     { name = "tzdata" },
     { name = "uvicorn" },
@@ -1274,23 +1268,31 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
+training = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "aiogram", specifier = ">=3.20,<4" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "numpy", specifier = ">=2,<3" },
+    { name = "numpy", marker = "extra == 'training'", specifier = ">=2,<3" },
     { name = "pydantic-settings", specifier = ">=2.5,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<10" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24,<2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8,<1" },
-    { name = "scipy", specifier = ">=1.14,<2" },
+    { name = "scipy", marker = "extra == 'training'", specifier = ">=1.14,<2" },
     { name = "sqlalchemy", specifier = ">=2.0,<2.1" },
     { name = "tzdata", specifier = ">=2025.1" },
     { name = "uvicorn", specifier = ">=0.30,<1" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "training"]
 
 [[package]]
 name = "pluggy"

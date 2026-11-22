@@ -52,3 +52,15 @@ class ReactionInput(BaseModel):
     target_id: int = Field(gt=0)
     kind: Literal["like", "skip", "block", "report"]
     reason: str = Field(default="Другое", min_length=1, max_length=500)
+
+
+class ImportedGame(BaseModel):
+    appid: int = Field(gt=0, lt=2**31)
+    name: str = ""
+    playtime_forever: int = Field(default=0, ge=0, lt=2**31)
+    playtime_2weeks: int = Field(default=0, ge=0, lt=2**31)
+
+    @field_validator("name")
+    @classmethod
+    def bounded_name(cls, value):
+        return value.strip()[:160]

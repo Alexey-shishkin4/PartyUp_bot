@@ -1,0 +1,80 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ['3.10', '3.12', '3.14']
+        include:
+          - os: macos-latest
+            python: '3.12'
+          - os: windows-latest
+            python: '3.12'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python -m pytest -q --tb=short
+      - run: python -m ruff check app scripts tests
+
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install uv==0.13.9
+      - run: uv lock --check
+      - name: Check reproducible requirements
+        run: |
+          uv export --locked --no-emit-project --no-hashes --no-dev -o requirements.txt
+          uv export --locked --no-emit-project --no-hashes --no-dev --extra dev -o requirements-dev.txt
+          uv export --locked --no-emit-project --no-hashes --no-dev --extra training -o requirements-training.txt
+          git diff --exit-code -- uv.lock requirements.txt requirements-dev.txt requirements-training.txt
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: docker build -t partyup-ci .
+      - name: Check container startup
+        shell: bash
+        run: |
+          docker run -d --name partyup-ci -e FORCE_DEMO=true partyup-ci
+          trap 'docker logs partyup-ci; docker rm -f partyup-ci' EXIT
+          for attempt in {1..30}; do
+            if docker exec partyup-ci python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2).close()"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1

@@ -3,15 +3,18 @@ import json
 import math
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from .models import User
+from .models import Game, User
 
 VERSION = "hybrid-cosine-v1"
 
 
+@lru_cache(maxsize=16384)
 def title_key(value: str) -> str:
     return re.sub(r"[^\w]+", " ", value.casefold()).strip()
 
@@ -21,6 +24,13 @@ class AffinityModel:
         self.data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         self.neighbors = self.data.get("neighbors", {})
         self.version = self.data.get("version", "content-only")
+        # Serving treats the graph symmetrically. Build incoming edges once,
+        # instead of comparing every pair of games for every candidate.
+        self.links = defaultdict(dict)
+        for source, neighbors in self.neighbors.items():
+            for target, value in neighbors.items():
+                weight = max(value, self.links[source].get(target, 0))
+                self.links[source][target] = self.links[target][source] = weight
 
     def similarity(self, left: str, right: str) -> float:
         a, b = title_key(left), title_key(right)
@@ -31,6 +41,20 @@ class AffinityModel:
     def game_similarity(self, left, right):
         return max(self.similarity(a, b) for a in [left.name, *left.aliases]
                    for b in [right.name, *right.aliases])
+
+    def library_similarity(self, source, target):
+        if not source.weights or not target.weights:
+            return 0.0
+        total = 0.0
+        for app_id, weight in source.weights.items():
+            keys = source.keys[app_id]
+            if keys & target.titles:
+                best = 1.0
+            else:
+                best = max((value for key in keys for neighbor, value in self.links.get(key, {}).items()
+                            if neighbor in target.titles), default=0.0)
+            total += weight * best
+        return total / sum(source.weights.values())
 
 
 def compatible(a: User, b: User) -> bool:
@@ -59,58 +83,69 @@ def weights(user: User) -> dict[int, float]:
     return {key: value / norm for key, value in raw.items()}
 
 
-def schedule_slots(user: User, now: datetime) -> set[int]:
+def schedule_slots(user: User, now: datetime) -> frozenset[int]:
     """Daily local intervals converted at each actual UTC date (including DST).
 
     Half-hour resolution handles non-integer time-zone offsets. An interval that
     crosses midnight belongs to both local dates; the schedule repeats daily.
     """
     base = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return _schedule_slots(user.timezone, user.start_hour, user.end_hour, base)
+
+
+@lru_cache(maxsize=4096)
+def _schedule_slots(zone_name, start, end, base):
     slots = set()
-    zone = ZoneInfo(user.timezone)
+    zone = ZoneInfo(zone_name)
     for index in range(7 * 48):
         local = (base + timedelta(minutes=30 * index)).astimezone(zone)
         hour = local.hour + local.minute / 60
-        start, end = user.start_hour, user.end_hour
         inside = start <= hour < end if start < end else hour >= start or hour < end
         if inside:
             slots.add(index)
-    return slots
+    return frozenset(slots)
 
 
-def score(a: User, b: User, model: AffinityModel, now: datetime | None = None) -> dict:
-    wa, wb = weights(a), weights(b)
+@dataclass(frozen=True)
+class ProfileFeatures:
+    weights: dict[int, float]
+    games: dict[int, Game]
+    keys: dict[int, frozenset[str]]
+    titles: frozenset[str]
+    genres: dict[str, float]
+    slots: frozenset[int]
+
+
+def prepare(user: User, now: datetime) -> ProfileFeatures:
+    game_weights = weights(user)
+    games = {entry.app_id: entry.game for entry in user.games}
+    keys = {app_id: frozenset(title_key(title) for title in [games[app_id].name, *games[app_id].aliases])
+            for app_id in game_weights}
+    genres = defaultdict(float)
+    for app_id, weight in game_weights.items():
+        labels = games[app_id].genres
+        for genre in labels:
+            genres[genre] += weight / max(1, len(labels))
+    norm = math.sqrt(sum(value * value for value in genres.values())) or 1
+    return ProfileFeatures(game_weights, games, keys, frozenset(key for titles in keys.values() for key in titles),
+                           {key: value / norm for key, value in genres.items()}, schedule_slots(user, now))
+
+
+def score(a: User, b: User, model: AffinityModel, now: datetime | None = None, *,
+          prepared_a: ProfileFeatures | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    left, right = prepared_a or prepare(a, now), prepare(b, now)
+    wa, wb = left.weights, right.weights
+    ga = left.games
     exact = sum(value * wb.get(key, 0) for key, value in wa.items())
-    ga = {entry.app_id: entry.game for entry in a.games}
-    gb = {entry.app_id: entry.game for entry in b.games}
-
-    def learned(source, target, source_games, target_games):
-        if not source or not target:
-            return 0.0
-        return sum(
-            weight * max(
-                (model.game_similarity(source_games[i], target_games[j]) for j in target), default=0
-            )
-            for i, weight in source.items()
-        ) / sum(source.values())
 
     # A high affinity must hold in both directions; one broad library cannot dominate.
-    affinity = min(learned(wa, wb, ga, gb), learned(wb, wa, gb, ga))
+    affinity = min(model.library_similarity(left, right), model.library_similarity(right, left))
     games_score = 0.85 * exact + 0.15 * affinity
 
-    def genre_vector(game_weights, game_map):
-        result = defaultdict(float)
-        for app_id, weight in game_weights.items():
-            genres = game_map[app_id].genres
-            for genre in genres:
-                result[genre] += weight / max(1, len(genres))
-        norm = math.sqrt(sum(v * v for v in result.values())) or 1
-        return {key: value / norm for key, value in result.items()}
-
-    ta, tb = genre_vector(wa, ga), genre_vector(wb, gb)
+    ta, tb = left.genres, right.genres
     genres_score = sum(value * tb.get(key, 0) for key, value in ta.items())
-    now = now or datetime.now(timezone.utc)
-    sa, sb = schedule_slots(a, now), schedule_slots(b, now)
+    sa, sb = left.slots, right.slots
     shared = sa & sb
     overlap = len(shared)
     base = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -130,7 +165,7 @@ def score(a: User, b: User, model: AffinityModel, now: datetime | None = None) -
         window = {"start": start.strftime("%H:%M"), "end": end.strftime("%H:%M"),
                   "day_offset": (start.date() - local_now.date()).days, "ongoing": start <= now}
     time_score = overlap / max(len(sa), len(sb), 1)
-    common = sorted(wa.keys() & wb.keys(), key=lambda key: wa[key] * wb[key], reverse=True)
+    common = sorted(wa.keys() & wb.keys(), key=lambda key: (-wa[key] * wb[key], key))
     total = 0.65 * games_score + 0.25 * genres_score + 0.10 * time_score
     return {
         "score": round(100 * total, 1),

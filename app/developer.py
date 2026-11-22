@@ -118,6 +118,8 @@ class DeveloperService:
                 ) from None
             for key, value in changes.items():
                 setattr(user, key, getattr(validated, key) if key in allowed else value)
+            if "banned" in changes:
+                self.service.apply_ban(session, user, changes["banned"])
             self.audit(session, actor, target, "profile_update", {"fields": sorted(changes)})
         return self.read_profile(actor, target)
 
