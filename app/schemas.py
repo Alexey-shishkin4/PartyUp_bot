@@ -1,7 +1,7 @@
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 class ProfileInput(BaseModel):
@@ -17,7 +17,14 @@ class ProfileInput(BaseModel):
     end_hour: int = Field(default=23, ge=0, le=24)
     bio: str = Field(default="", max_length=500)
     language: Literal["ru", "en"] = "ru"
-    game_ids: list[int] = Field(min_length=1, max_length=10)
+    game_ids: list[int] = Field(max_length=10)
+
+    @field_validator("game_ids")
+    @classmethod
+    def valid_games(cls, value, info: ValidationInfo):
+        if not value and not (info.context or {}).get("allow_empty_games"):
+            raise ValueError("Выбери хотя бы одну игру")
+        return list(dict.fromkeys(value))
 
     @field_validator("name", "bio")
     @classmethod
@@ -44,7 +51,6 @@ class ProfileInput(BaseModel):
             raise ValueError("Неверный возрастной диапазон")
         if self.start_hour == self.end_hour or (self.start_hour == 0 and self.end_hour == 24):
             raise ValueError("Выберите интервал меньше суток")
-        self.game_ids = list(dict.fromkeys(self.game_ids))
         return self
 
 

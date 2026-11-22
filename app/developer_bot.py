@@ -166,7 +166,6 @@ def build_developer_router(service, settings, send_card, profile_text, main_menu
             message,
             profile,
             reply_markup=keyboard([[("К анкете", f"dev:profile:{target}"), ("Панель", "dev:home")]]),
-            developer_preview=True,
         )
 
     async def fields(message, actor, target):
@@ -240,8 +239,8 @@ def build_developer_router(service, settings, send_card, profile_text, main_menu
             parts = result["components"]
             await message.answer(
                 f"🧪 #{left} ↔ #{right}\nФильтры: {'подходят' if result['compatible'] else 'не подходят'}\n"
-                f"Сходство: {result['score']}/100\nИгры: {parts['games']} · "
-                f"жанры: {parts['genres']} · время: {parts['time']}\n"
+                f"Сходство: {result['score']}/100\nГлавная игра: {parts['main_game']} · "
+                f"другие игры: {parts['other_games']} · жанры: {parts['genres']} · расписание: {parts['time']}\n"
                 f"Общие игры: {escape(', '.join(result['common_games'])) or 'нет'}",
                 reply_markup=keyboard([[("Панель", "dev:home")]]),
             )

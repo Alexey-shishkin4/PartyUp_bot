@@ -83,5 +83,170 @@
     "bio": "Люблю кооперативные хорроры, хотя сама пугаюсь каждого звука. Буду смеяться, кричать и возвращаться спасать твою экипировку.",
     "pin_url": "https://ru.pinterest.com/pin/1125477763155003678/",
     "image_url": "https://i.pinimg.com/736x/a1/08/bf/a108bfa000ae19e9ca2ec98548b87327.jpg"
+  },
+  {
+    "telegram_id": -10006,
+    "slug": "korol-67",
+    "photo": "korol-67.png",
+    "name": "Король 67",
+    "age": 29,
+    "gender": "male",
+    "timezone": "Asia/Novosibirsk",
+    "start_hour": 20,
+    "end_hour": 24,
+    "bio": "У моего королевства два трона: Mirage и мид. Собираю пати, выдаю коллы и никогда не экономлю на командной аптечке.",
+    "library": [
+      {"app_id": 730, "hours": 1450, "recent_hours": 14},
+      {"app_id": 570, "hours": 900, "recent_hours": 6},
+      {"app_id": 1172470, "hours": 55},
+      {"app_id": 218620, "hours": 48}
+    ]
+  },
+  {
+    "telegram_id": -10007,
+    "slug": "vika",
+    "photo": "vika.png",
+    "name": "Вика",
+    "age": 23,
+    "timezone": "Asia/Novosibirsk",
+    "start_hour": 19,
+    "end_hour": 24,
+    "bio": "Играю на четвёрке, ставлю варды и люблю разбирать реплеи. Ищу дуо с нормальными коллами и чувством юмора.",
+    "library": [
+      {"app_id": 570, "hours": 2400, "recent_hours": 34},
+      {"app_id": 1422450, "name": "Deadlock", "hours": 65, "recent_hours": 2},
+      {"app_id": 730, "hours": 18}
+    ]
+  },
+  {
+    "telegram_id": -10008,
+    "slug": "lina",
+    "photo": "lina.png",
+    "name": "Лина",
+    "age": 25,
+    "timezone": "Asia/Yekaterinburg",
+    "start_hour": 18,
+    "end_hour": 23,
+    "bio": "Учу раскидки на Ancient и собираю спокойную пятёрку. После Premier могу сменить бомбу на ограбление в PAYDAY.",
+    "library": [
+      {"app_id": 730, "hours": 1550, "recent_hours": 25},
+      {"app_id": 1172470, "hours": 70, "recent_hours": 2},
+      {"app_id": 218620, "hours": 58, "recent_hours": 3},
+      {"app_id": 440, "hours": 24},
+      {"app_id": 550, "hours": 32}
+    ]
+  },
+  {
+    "telegram_id": -10009,
+    "slug": "rina",
+    "photo": "rina.png",
+    "name": "Рина",
+    "age": 24,
+    "timezone": "Asia/Novosibirsk",
+    "start_hour": 20,
+    "end_hour": 1,
+    "bio": "В Dota мне ближе офлейн. Сейчас разбираюсь в Deadlock, достраиваю базу в Terraria и готова идти в Elden Ring с пати.",
+    "library": [
+      {"app_id": 570, "hours": 1150},
+      {"app_id": 730, "hours": 490, "recent_hours": 7},
+      {"app_id": 105600, "hours": 190, "recent_hours": 10},
+      {"app_id": 1422450, "name": "Deadlock", "hours": 200, "recent_hours": 12},
+      {"app_id": 4000, "hours": 170, "recent_hours": 5},
+      {"app_id": 1245620, "hours": 90, "recent_hours": 6},
+      {"app_id": 322330, "hours": 60, "recent_hours": 2},
+      {"app_id": 1966720, "hours": 40}
+    ]
+  },
+  {
+    "telegram_id": -10010,
+    "slug": "kai",
+    "photo": "kai.png",
+    "name": "Кай",
+    "age": 21,
+    "gender": "male",
+    "timezone": "Asia/Krasnoyarsk",
+    "start_hour": 19,
+    "end_hour": 23,
+    "bio": "Только осваиваю Steam. В Dota пока боты, в CS2 учусь давать инфу, а в Terraria честно строю прямоугольники.",
+    "library": [
+      {"app_id": 570, "hours": 2, "recent_hours": 2},
+      {"app_id": 730, "hours": 2, "recent_hours": 2},
+      {"app_id": 105600, "hours": 6, "recent_hours": 3},
+      {"app_id": 1422450, "name": "Deadlock", "hours": 3, "recent_hours": 1},
+      {"app_id": 4000, "hours": 4}
+    ]
+  },
+  {
+    "telegram_id": -10011,
+    "slug": "yuna",
+    "photo": "yuna.png",
+    "name": "Юна",
+    "age": 22,
+    "timezone": "Asia/Novosibirsk",
+    "start_hour": 21,
+    "end_hour": 2,
+    "bio": "В кооп-хоррорах держу рацию и обещаю вернуться за тобой даже после закрытия дверей. Иногда устраиваю тихие вечера в Terraria.",
+    "library": [
+      {"app_id": 739630, "hours": 220, "recent_hours": 8},
+      {"app_id": 1966720, "hours": 170, "recent_hours": 16},
+      {"app_id": 3241660, "hours": 140, "recent_hours": 10},
+      {"app_id": 322330, "hours": 80, "recent_hours": 3},
+      {"app_id": 105600, "hours": 60}
+    ]
+  },
+  {
+    "telegram_id": -10012,
+    "slug": "mark",
+    "photo": "mark.png",
+    "name": "Марк",
+    "age": 27,
+    "gender": "male",
+    "timezone": "Europe/Moscow",
+    "start_hour": 19,
+    "end_hour": 24,
+    "bio": "Когда-то жил в Dota. Сейчас чаще летаю на миссии в Warframe и собираю команду на вечерний Apex.",
+    "library": [
+      {"app_id": 230410, "hours": 5400, "recent_hours": 34},
+      {"app_id": 1172470, "hours": 3100, "recent_hours": 12},
+      {"app_id": 570, "hours": 2400},
+      {"app_id": 730, "hours": 22}
+    ]
+  },
+  {
+    "telegram_id": -10013,
+    "slug": "kefir",
+    "photo": "kefir.png",
+    "name": "Дядя Кефир",
+    "age": 36,
+    "gender": "male",
+    "timezone": "Asia/Novosibirsk",
+    "start_hour": 18,
+    "end_hour": 23,
+    "bio": "Собираю технику в War Thunder, люблю командные игры и всегда держу кефир в холодильнике. По выходным могу засесть в XCOM.",
+    "library": [
+      {"app_id": 236390, "hours": 690, "recent_hours": 11},
+      {"app_id": 440, "hours": 460, "recent_hours": 6},
+      {"app_id": 268500, "hours": 85},
+      {"app_id": 252490, "hours": 160}
+    ]
+  },
+  {
+    "telegram_id": -10014,
+    "slug": "artem",
+    "photo": "artem.png",
+    "name": "Артём",
+    "age": 28,
+    "gender": "male",
+    "timezone": "Europe/Moscow",
+    "start_hour": 20,
+    "end_hour": 24,
+    "bio": "Могу весь вечер обсуждать билд для BG3 или маршрут по Скайриму. В Stardew люблю поливать грядки под подкаст.",
+    "library": [
+      {"app_id": 1086940, "hours": 290, "recent_hours": 7},
+      {"app_id": 72850, "hours": 410},
+      {"app_id": 413150, "hours": 170, "recent_hours": 8},
+      {"app_id": 646570, "hours": 105, "recent_hours": 4},
+      {"app_id": 1145360, "hours": 125}
+    ]
   }
 ]

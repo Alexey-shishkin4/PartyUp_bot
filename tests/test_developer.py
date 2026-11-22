@@ -42,11 +42,13 @@ def test_profiles_include_hidden_banned_and_test_with_pagination(service, users)
     seed_test_profiles(service)
     dev = developer(service)
     page = dev.list_profiles(1)
-    assert page["total"] == 7 and len(page["profiles"]) == 5
-    assert len(dev.list_profiles(1, offset=5)["profiles"]) == 2
+    total = len(fixture_definitions()) + 2
+    assert page["total"] == total and len(page["profiles"]) == 5
+    assert len(dev.list_profiles(1, offset=5)["profiles"]) == 5
+    assert len(dev.list_profiles(1, offset=total - 2)["profiles"]) == 2
     assert dev.list_profiles(1, scope="paused")["profiles"][0]["id"] == first.id
     assert dev.list_profiles(1, scope="banned")["profiles"][0]["id"] == second.id
-    assert dev.list_profiles(1, scope="test")["total"] == 5
+    assert dev.list_profiles(1, scope="test")["total"] == len(fixture_definitions())
     assert dev.list_profiles(1, scope="real")["total"] == 2
     assert dev.read_profile(1, second.id)["banned"]
 

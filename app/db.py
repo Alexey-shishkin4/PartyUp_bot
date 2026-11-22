@@ -26,7 +26,9 @@ class Database:
     def initialize(self):
         Base.metadata.create_all(self.engine)
         # Preserve registered users and drafts while upgrading older MVP databases.
-        existing_columns = {column["name"] for column in inspect(self.engine).get_columns("users")}
+        inspector = inspect(self.engine)
+        existing_columns = {column["name"] for column in inspector.get_columns("users")}
+        game_columns = {column["name"] for column in inspector.get_columns("user_games")}
         additions = {
             "share_username": "ALTER TABLE users ADD COLUMN share_username BOOLEAN NOT NULL DEFAULT 0",
             "looking_for_game": "ALTER TABLE users ADD COLUMN looking_for_game INTEGER",
@@ -34,7 +36,10 @@ class Database:
             "notify_new_profiles": "ALTER TABLE users ADD COLUMN notify_new_profiles BOOLEAN NOT NULL DEFAULT 0",
             "steam_verified": "ALTER TABLE users ADD COLUMN steam_verified BOOLEAN NOT NULL DEFAULT 0",
             "photo_file_id": "ALTER TABLE users ADD COLUMN photo_file_id VARCHAR(1024)",
+            "use_default_avatar": "ALTER TABLE users ADD COLUMN use_default_avatar BOOLEAN NOT NULL DEFAULT 0",
+            "schedule_set": "ALTER TABLE users ADD COLUMN schedule_set BOOLEAN NOT NULL DEFAULT 1",
             "steam_import_status": "ALTER TABLE users ADD COLUMN steam_import_status VARCHAR(24) NOT NULL DEFAULT 'not_loaded'",
+            "dota_rank_tier": "ALTER TABLE users ADD COLUMN dota_rank_tier INTEGER",
             "is_test": "ALTER TABLE users ADD COLUMN is_test BOOLEAN NOT NULL DEFAULT 0",
             "test_photo_override": "ALTER TABLE users ADD COLUMN test_photo_override BOOLEAN NOT NULL DEFAULT 0",
         }
@@ -42,6 +47,8 @@ class Database:
             for column, statement in additions.items():
                 if column not in existing_columns:
                     connection.execute(text(statement))
+            if "dota_match_minutes" not in game_columns:
+                connection.execute(text("ALTER TABLE user_games ADD COLUMN dota_match_minutes INTEGER NOT NULL DEFAULT 0"))
         with self.session.begin() as session:
             for row in json.loads((ROOT / "data/catalog.json").read_text(encoding="utf-8")):
                 if not session.get(Game, row["app_id"]):

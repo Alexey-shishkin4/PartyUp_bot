@@ -174,7 +174,7 @@ async def test_banned_test_profile_can_be_viewed_with_photo(service):
 
 
 @pytest.mark.parametrize("long_bio", [False, True])
-async def test_private_card_preview_preserves_public_disclosure(service, users, long_bio):
+async def test_private_card_preview_uses_same_profile_text_as_discovery(service, users, long_bio):
     viewer = users(1)
     seed_test_profiles(service)
     target_id = service.feed(viewer.id, limit=1, record_impressions=False)[0]["profile"]["id"]
@@ -204,10 +204,13 @@ async def test_private_card_preview_preserves_public_disclosure(service, users, 
         assert session.scalar(select(func.count()).select_from(Event)) == 0
         assert session.scalar(select(func.count()).select_from(DeveloperAudit)) == 0
 
+    sent_before_find = len(harness.sent())
     await harness.update(1, "/find")
-    assert "ДЕМО-ПРОФИЛЬ БОТА" in harness.photos_sent()[-1].caption
-    public_text = harness.photos_sent()[-1].caption + harness.sent()[-1].text
-    assert "Источник фото" in public_text
+    public_text = harness.photos_sent()[-1].caption + "\n" + "\n".join(
+        message.text for message in harness.sent()[sent_before_find:]
+    )
+    assert target.name in public_text and target.bio in public_text
+    assert "ДЕМО-ПРОФИЛЬ БОТА" not in public_text and "Источник фото" not in public_text
     await harness.bot.session.close()
 
 

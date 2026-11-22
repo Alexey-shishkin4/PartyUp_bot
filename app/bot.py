@@ -2,8 +2,10 @@ import asyncio
 import logging
 import math
 import re
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from html import escape
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
@@ -17,26 +19,28 @@ from aiogram.types import BotCommand, BotCommandScopeChat, FSInputFile, InlineKe
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from .models import Report, User, utcnow
+from .models import Game, Report, User, utcnow
 from .config import ROOT
+from .dota import DOTA_APP_ID, dota_game_name
+from .recommender import CARD_GAME_LIMIT, steam_card_game_ids
 from .schemas import ProfileInput
 from .service import DomainError, PHOTO_UNCHANGED, PURPOSES
+from .steam_public import PublicProfile
 from .storage import DatabaseStorage
 from .test_profiles import fixture_definitions
 
 log = logging.getLogger(__name__)
 
-TEST_PROFILE_TITLE = "🤖 ДЕМО-ПРОФИЛЬ БОТА"
-TEST_PROFILE_DESCRIPTION = (
-    "Анкета вымышлена. Фото — иллюстрация. Ответов и взаимных совпадений не будет."
-)
 CONTACT_NOTICE = "При взаимном лайке бот покажет собеседнику твой Telegram @username."
+DEFAULT_AVATAR = ROOT / "app/assets/default-avatar.png"
 
 
 class Form(StatesGroup):
     consent = State()
     step = State()
     games = State()
+    game_source = State()
+    registration_steam = State()
     steam_link = State()
     photo = State()
     review = State()
@@ -72,7 +76,8 @@ STEPS = [
      [("Без описания", "-")]),
 ]
 FIELD_STEPS = {field: (prompt, choices) for field, prompt, choices in STEPS}
-REQUIRED_FIELDS = ("name", "age", "purpose", "timezone", "hours")
+REGISTRATION_FIELDS = ("name", "age", "timezone", "bio")
+PREVIOUS_REGISTRATION_FIELDS = ("name", "age", "purpose", "timezone", "hours")
 EDIT_FIELDS = (
     (("Имя", "name"), ("Возраст", "age")),
     (("Цель знакомства", "purpose"), ("Описание", "bio")),
@@ -82,29 +87,44 @@ EDIT_FIELDS = (
 )
 
 
-def profile_text(profile, *, developer_preview=False):
-    def names(values):
-        return ", ".join(value if len(value) <= 64 else value[:61] + "…" for value in values)
-    selected = profile.get("selected_games", profile["games"])
-    games_text = f"🎮 Актуальные игры: {escape(names(selected))}" if selected else ""
-    steam_games = profile.get("steam_games", [])
-    if steam_games:
-        games_text += "\n🕹 Из Steam: " + escape(names(steam_games[:8]))
-        remaining = profile.get("steam_game_count", len(steam_games)) - min(8, len(steam_games))
-        if remaining > 0:
-            games_text += f" · ещё {remaining}"
-    labelled_test = profile.get("is_test") and not developer_preview
-    notice = (f"<b>{TEST_PROFILE_TITLE}</b>\n{TEST_PROFILE_DESCRIPTION}\n\n"
-              if labelled_test else "")
-    source = (f'\n\n<a href="{escape(profile["photo_source_url"])}">Источник фото: Pinterest</a>'
-              if labelled_test and profile.get("photo_source_url") else "")
-    return notice + (
-        f"<b>{escape(profile['name'])}, {profile['age']}</b>\n"
-        f"{escape(profile['purpose_label'])}\n"
-        f"{escape(profile['timezone'])} · {profile['start_hour']:02}:00–{profile['end_hour']:02}:00\n\n"
-        f"{escape(profile['bio'])}\n\n"
-        f"{games_text}"
-    ) + source
+def registration_fields(data):
+    if data.get("new_registration"):
+        return REGISTRATION_FIELDS
+    if data.get("short_registration"):
+        return PREVIOUS_REGISTRATION_FIELDS
+    return tuple(item[0] for item in STEPS)
+
+
+def avatar_buttons(*, back=None, allow_removal=False):
+    rows = [[("Загрузить фото", "photo:upload")], [("Выбрать стандартное", "photo:default")]]
+    if allow_removal:
+        rows.append([("Удалить фото из анкеты", "photo:remove")])
+    if back:
+        rows.append([("← Назад", back)])
+    return buttons(rows)
+
+
+def profile_heading(profile):
+    offset = datetime.now(ZoneInfo(profile["timezone"])).strftime("%z")
+    minutes = f":{offset[3:]}" if offset[3:] != "00" else ""
+    return f"<b>{escape(profile['name'])}</b> (UTC{offset[0]}{int(offset[1:3])}{minutes})"
+
+
+def card_game_name(name):
+    return escape(name[:47] + "…" if len(name) > 48 else name)
+
+
+def profile_text(profile, *, common_games=()):
+    sections = [profile_heading(profile)]
+    if profile["games"]:
+        names = [card_game_name(name) for name in profile["games"][:CARD_GAME_LIMIT]]
+        sections.append("<b>🎮 Игры</b>\n" + "\n".join(f"• {name}" for name in names))
+    if common_games:
+        sections.append("<b>🤝 Общие игры</b>\n" + " · ".join(map(card_game_name, common_games)))
+    bio = profile["bio"]
+    if bio:
+        sections.append("<b>О себе</b>\n" + escape(bio))
+    return "\n\n".join(sections)
 
 
 def steam_status_text(profile):
@@ -144,10 +164,12 @@ def build_bot(service, settings, steam, public_steam=None):
     async def prompt(message, state):
         data = await state.get_data()
         index = data["step_index"]
-        fields = REQUIRED_FIELDS if data.get("short_registration") else tuple(item[0] for item in STEPS)
+        fields = registration_fields(data)
+        if index >= len(fields) and data.get("new_registration"):
+            await prompt_registration_avatar(message, state)
+            return
         if index >= len(fields) and data.get("short_registration"):
-            await state.set_state(Form.games)
-            await show_games(message, state)
+            await show_game_source(message, state)
             return
         if index >= len(fields):
             await state.update_data(photo_flow="registration")
@@ -162,6 +184,11 @@ def build_bot(service, settings, steam, public_steam=None):
         await show_field(message, state, fields[index], prefix=f"<b>{index + 1}/{len(fields) + 1}</b> · ",
                          back="form:back" if index > 0 else None)
 
+    async def prompt_registration_avatar(message, state):
+        await state.update_data(photo_flow="registration")
+        await state.set_state(Form.photo)
+        await message.answer("Выбери аватар для анкеты.", reply_markup=avatar_buttons(back="form:back"))
+
     async def show_field(message, state, field, *, prefix="", back=None):
         prompt_text, choices = FIELD_STEPS[field]
         rows = [[(label, f"form:{field}:{value}")] for label, value in choices or []]
@@ -173,7 +200,7 @@ def build_bot(service, settings, steam, public_steam=None):
     async def consume_step(message, state, sender, value, expected_field=None):
         data = await state.get_data()
         index = data.get("step_index", 0)
-        fields = REQUIRED_FIELDS if data.get("short_registration") else tuple(item[0] for item in STEPS)
+        fields = registration_fields(data)
         field = data.get("edit_field") or fields[index]
         if expected_field is not None and expected_field != field:
             await message.answer("Эта кнопка относится к предыдущему шагу.")
@@ -235,38 +262,69 @@ def build_bot(service, settings, steam, public_steam=None):
         await state.update_data(form=form, step_index=index + 1)
         await prompt(message, state)
 
+    def registration_catalog(data):
+        catalog = {game.app_id: game for game in service.db.catalog()}
+        for row in (data.get("draft_steam") or {}).get("games", []):
+            app_id = row["appid"]
+            if app_id not in catalog:
+                catalog[app_id] = Game(app_id=app_id, name=row.get("name", f"Steam {app_id}"), aliases=[])
+        return catalog
+
+    async def show_game_source(message, state):
+        await state.set_state(Form.game_source)
+        await message.answer(
+            "Подключи Steam, чтобы бот сам выбрал игры для анкеты и учёл всю доступную библиотеку в подборе.",
+            reply_markup=buttons([
+                [("🎮 Подключить Steam", "registration:steam")],
+                [("Выбрать игры из списка", "registration:manual")],
+                [("← Назад", "form:back")],
+            ]),
+        )
+
     async def show_games(message, state, query=""):
         data = await state.get_data()
         selected = data.get("selected", [])
-        catalog = service.db.catalog()
-        games = [game for game in catalog if not query or any(query.casefold() in text.casefold() for text in [game.name, *game.aliases])][:12]
-        rows = [[(f"{'✓ ' if game.app_id in selected else ''}{game.name}", f"game:{game.app_id}")] for game in games]
+        catalog = registration_catalog(data)
+        query = query.casefold()
+        games = sorted(catalog.values(), key=lambda game: (game.app_id not in selected, game.name.casefold()))
+        games = [game for game in games if any(query in text.casefold() for text in [game.name, *game.aliases])][:12]
         registration = data.get("games_flow") != "edit"
+        rows = [[(f"{'✓ ' if game.app_id in selected else ''}{game.name[:60]}", f"game:{game.app_id}")] for game in games]
         rows.append([("Посмотреть анкету" if registration else "Сохранить игры", "game:save")])
         if data.get("short_registration"):
-            rows.append([("← Назад", "review:open" if data.get("reviewed") else "form:back")])
+            rows.append([("← Назад", "review:open" if data.get("reviewed") else "registration:source")])
         elif not registration:
             rows.append([("← К настройкам", "edit:menu")])
-        names = [game.name for game in catalog if game.app_id in selected]
-        await message.answer(f"Выбрано {len(selected)}/10: {escape(', '.join(names)) or 'пока ничего'}\nПоиск: отправь название игры.", reply_markup=buttons(rows))
+        names = [catalog[app_id].name[:55] for app_id in selected if app_id in catalog]
+        await message.answer(f"Выбрано {len(selected)}/10: {escape(', '.join(names)) or 'пока ничего'}\n"
+                             "Выбери актуальные игры кнопками или отправь название для поиска.",
+                             reply_markup=buttons(rows))
+
+    async def prompt_registration_steam(message):
+        await message.answer(
+            "Пришли ссылку на свой профиль steamcommunity.com. Получим доступные игры и часы для подбора, "
+            "а для Dota 2 проверим публичную статистику в OpenDota.",
+            reply_markup=buttons([[("← К выбору способа", "registration:source")]])
+        )
 
     def card_photo(profile):
         photo = service.photo_file(profile["id"])
+        if not photo and profile.get("use_default_avatar"):
+            return FSInputFile(DEFAULT_AVATAR)
         local = service.test_photo_file(profile["id"]) if profile.get("is_test") and not photo else None
         return FSInputFile(local) if local else photo
 
-    async def send_card(message, profile, text=None, reply_markup=None, *, developer_preview=False,
-                        draft_photo=PHOTO_UNCHANGED):
-        text = text or profile_text(profile, developer_preview=developer_preview)
+    async def send_card(message, profile, text=None, reply_markup=None, *, draft_photo=PHOTO_UNCHANGED):
+        text = text or profile_text(profile)
         photo = card_photo(profile) if draft_photo is PHOTO_UNCHANGED else draft_photo
         if photo:
             # Telegram photo captions have a smaller limit than regular messages.
             short = len(text.encode("utf-16-le")) // 2 <= 1024
-            caption = text if short else (TEST_PROFILE_TITLE + "\n" if profile.get("is_test") and not developer_preview else "") + f"<b>{escape(profile['name'])}, {profile['age']}</b>"
+            caption = text if short else profile_heading(profile)
             try:
                 sent = await message.answer_photo(photo, caption=caption,
                                                   reply_markup=reply_markup if short else None)
-                if isinstance(photo, FSInputFile) and sent.photo:
+                if isinstance(photo, FSInputFile) and profile.get("is_test") and sent.photo:
                     service.cache_test_photo(profile["id"],max(sent.photo,key=lambda item:item.width*item.height).file_id)
                 if short:
                     return
@@ -274,20 +332,24 @@ def build_bot(service, settings, steam, public_steam=None):
                 log.warning("Profile photo could not be sent; using text card")
         await message.answer(text, reply_markup=reply_markup)
 
-    async def finish_photo(message, state, file_id=PHOTO_UNCHANGED):
+    async def finish_photo(message, state, file_id=PHOTO_UNCHANGED, *, use_default_avatar=False):
         data = await state.get_data()
         if data.get("photo_flow") in {"registration", "review"}:
             if file_id is not PHOTO_UNCHANGED:
-                await state.update_data(draft_photo_file_id=file_id)
+                await state.update_data(draft_photo_file_id=file_id, draft_default_avatar=use_default_avatar)
             if data.get("photo_flow") == "review":
                 await review_profile(message, state)
+                return
+            if data.get("new_registration"):
+                await show_game_source(message, state)
                 return
             await state.set_state(Form.games)
             await message.answer("Выбери от 1 до 10 актуальных игр. Напиши название для поиска или выбирай кнопками. Steam можно подключить после сохранения.")
             await show_games(message, state)
         else:
             await state.clear()
-            text = ("Вернулись в меню." if file_id is PHOTO_UNCHANGED else
+            text = ("Стандартный аватар установлен." if use_default_avatar else
+                    "Вернулись в меню." if file_id is PHOTO_UNCHANGED else
                     "Фото удалено из анкеты." if file_id is None else "Фото сохранено.")
             await message.answer(text, reply_markup=menu())
 
@@ -301,16 +363,35 @@ def build_bot(service, settings, steam, public_steam=None):
             rows.append([("← Моя анкета", "edit:profile")])
         await message.answer(prefix + "Что хочешь изменить?", reply_markup=buttons(rows))
 
+    def draft_steam_highlights(data):
+        steam = data.get("draft_steam") or {}
+        played = {row["appid"]: (row["appid"], row.get("playtime_forever", 0), row.get("playtime_2weeks", 0))
+                  for row in steam.get("games", [])}
+        dota = played.get(DOTA_APP_ID, (DOTA_APP_ID, 0, 0))
+        if steam.get("dota_match_minutes") and dota[1] == 0:
+            played[DOTA_APP_ID] = (DOTA_APP_ID, steam["dota_match_minutes"], dota[2])
+        return steam_card_game_ids(played.values())
+
+    def draft_profile(data):
+        highlights = draft_steam_highlights(data)
+        draft = ProfileInput.model_validate(
+            {**data["form"], "game_ids": data.get("selected", [])}, context={"allow_empty_games": bool(highlights)}
+        )
+        return draft, highlights
+
     async def review_profile(message, state):
         data = await state.get_data()
         try:
-            draft = ProfileInput(**data["form"], game_ids=data.get("selected", []))
+            draft, highlights = draft_profile(data)
         except (KeyError, ValidationError):
             await message.answer("Выбери хотя бы одну игру, чтобы посмотреть анкету.")
             await state.set_state(Form.games)
             await show_games(message, state)
             return
-        games = [game.name for game in service.db.catalog() if game.app_id in draft.game_ids]
+        catalog = registration_catalog(data)
+        game_ids = highlights or sorted(draft.game_ids)[:CARD_GAME_LIMIT]
+        rank = (data.get("draft_steam") or {}).get("dota_rank_tier")
+        games = [dota_game_name(app_id, catalog[app_id].name, rank) for app_id in game_ids if app_id in catalog]
         profile = {**draft.model_dump(), "games": games, "purpose_label": PURPOSES[draft.purpose]}
         wanted = {value: label for label, value in FIELD_STEPS["looking_for"][1]}[draft.looking_for]
         language = {value: label for label, value in FIELD_STEPS["language"][1]}[draft.language]
@@ -319,18 +400,30 @@ def build_bot(service, settings, steam, public_steam=None):
         await state.set_state(Form.review)
         rows = [[("Опубликовать анкету", "review:publish")],
                 [("Изменить", "review:fields"), ("Фото", "review:photo"), ("Описание", "review:bio")]]
+        if data.get("draft_steam"):
+            rows.append([("Изменить ссылку Steam", "registration:steam")])
+        photo = FSInputFile(DEFAULT_AVATAR) if data.get("draft_default_avatar") else data.get("draft_photo_file_id")
         await send_card(message, profile, "<b>Так выглядит твоя анкета</b>\n\n" + profile_text(profile)
-                        + f"\n\n{filters}\n\n" + CONTACT_NOTICE, buttons(rows),
-                        draft_photo=data.get("draft_photo_file_id"))
+                        + f"\n\n{filters}\n\n" + CONTACT_NOTICE
+                        + "\nПубликуя анкету, ты соглашаешься на обработку данных для подбора. Подробнее /privacy.",
+                        buttons(rows), draft_photo=photo)
 
     async def display_discovery(message, text, rows, *, profile=None, replace=False):
         markup = buttons(rows)
         photo = card_photo(profile) if profile else None
+        if photo and len(text.encode("utf-16-le")) // 2 > 1024:
+            await send_card(message, profile, text, markup, draft_photo=photo)
+            if replace:
+                try:
+                    await message.delete()
+                except TelegramBadRequest:
+                    pass
+            return
         if replace:
             try:
                 if photo:
                     sent = await message.edit_media(InputMediaPhoto(media=photo, caption=text), reply_markup=markup)
-                    if isinstance(photo, FSInputFile) and isinstance(sent, Message) and sent.photo:
+                    if isinstance(photo, FSInputFile) and profile.get("is_test") and isinstance(sent, Message) and sent.photo:
                         service.cache_test_photo(profile["id"], sent.photo[-1].file_id)
                     return
                 if message.text is not None:
@@ -345,7 +438,7 @@ def build_bot(service, settings, steam, public_steam=None):
                 sent = await message.answer_photo(photo, caption=text, reply_markup=markup)
             except TelegramBadRequest:
                 log.info("Could not send discovery photo; falling back to text")
-            if isinstance(photo, FSInputFile) and sent and sent.photo:
+            if isinstance(photo, FSInputFile) and profile.get("is_test") and sent and sent.photo:
                 service.cache_test_photo(profile["id"], sent.photo[-1].file_id)
         if not sent:
             await message.answer(text, reply_markup=markup)
@@ -360,6 +453,14 @@ def build_bot(service, settings, steam, public_steam=None):
             await message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
             pass
+
+    def shared_time_text(window):
+        if not window:
+            return "По указанному расписанию свободные часы не пересекаются."
+        day = {0: "сегодня", 1: "завтра"}.get(window["day_offset"], "в ближайшие дни")
+        timing = (f"сейчас, до {window['end']}" if window["ongoing"]
+                  else f"{day}, {window['start']}–{window['end']}")
+        return f"По расписанию вы оба свободны {timing} по твоему времени."
 
     async def show_feed(message, user, *, replace=False, preferred_id=None, allow_undo=False):
         rows = service.feed(user.id, limit=1, preferred_id=preferred_id)
@@ -385,39 +486,21 @@ def build_bot(service, settings, steam, public_steam=None):
             return
         row = rows[0]
         profile = row["profile"]
-        def shortened(value, size):
-            return escape(value[:size] + ("…" if len(value) > size else ""))
-
         target = profile["id"]
-        notice = f"<b>{TEST_PROFILE_TITLE}</b>\n{TEST_PROFILE_DESCRIPTION}\n\n" if profile["is_test"] else ""
-        text = focus_text + notice + f"<b>{escape(profile['name'])}, {profile['age']}</b>\n{profile['purpose_label']}"
-        if profile["bio"]:
-            text += "\n\n" + shortened(profile["bio"], 220)
-        if row["same_game_now"]:
-            text += f"\n\n⚡ Тоже ищет компанию в {escape(focus_game)}"
-        if row["common_games"]:
-            text += "\n\n🎮 Общие игры: " + shortened(", ".join(row["common_games"][:3]), 95)
-        elif row["common_genres"]:
-            text += "\n\n🎮 Общие жанры: " + shortened(", ".join(row["common_genres"][:3]), 80)
-        elif profile["games"]:
-            text += "\n\n🎮 " + shortened(", ".join(profile["games"][:3]), 95)
-        window = row["next_overlap"]
-        if window:
-            day = {0: "сегодня", 1: "завтра"}.get(window["day_offset"], "в ближайшие дни")
-            timing = f"сейчас, до {window['end']}" if window["ongoing"] else f"{day}: {window['start']}–{window['end']}"
-            text += f"\n🕒 По расписанию вы оба свободны {timing} по твоему времени"
-        else:
-            text += "\n🕒 По указанному расписанию свободные часы не пересекаются"
-        if profile["is_test"] and profile["photo_source_url"]:
-            text += f'\n<a href="{escape(profile["photo_source_url"])}">Источник фото: Pinterest</a>'
-        actions = [[("💜 Нравится", f"react:like:{target}"), ("Пропустить →", f"react:skip:{target}")],
-                   [("Подробнее", f"feed:details:{target}")]]
+        text = profile_text(profile, common_games=row["common_games"])
+        if focus_game:
+            heading = f"⚡ Тоже ищет компанию в {escape(focus_game)}" if row["same_game_now"] else focus_text.strip()
+            if user.schedule_set and profile["schedule_set"]:
+                heading += "\n" + shared_time_text(row["next_overlap"])
+            text = f"{heading}\n\n{text}"
+        actions = []
         if allow_undo:
             actions.append(undo)
         if focus:
             actions.append([("Вернуться к общему поиску", "focus:clear")])
         if not profile["is_test"]:
             actions.append([("Заблокировать", f"react:block:{target}"), ("Пожаловаться", f"react:report:{target}")])
+        actions.append([("💜 Нравится", f"react:like:{target}"), ("👎 Не нравится", f"react:skip:{target}")])
         await display_discovery(message, text, actions, profile=profile, replace=replace)
 
     async def peer_contact(peer, *, current_username=PHOTO_UNCHANGED):
@@ -461,7 +544,8 @@ def build_bot(service, settings, steam, public_steam=None):
             ]))
             return
         row = rows[0]
-        text = profile_text(row["profile"]) + f"\n\nСходство игровых интересов: {row['score']}/100."
+        text = profile_text(row["profile"], common_games=row["common_games"])
+        text += f"\n\nСходство игровых интересов: {row['score']}/100."
         target = row["profile"]["id"]
         await send_card(message,row["profile"],text,reply_markup=buttons([
             [("💜 Тестовый лайк",f"testreact:like:{target}"),("Дальше →",f"testreact:skip:{target}")],
@@ -474,8 +558,11 @@ def build_bot(service, settings, steam, public_steam=None):
             "<b>Данные и видимость</b>\n"
             "Храним анкету, Telegram ID, username, ссылку Telegram на фото анкеты, предпочтения, выбор игр, реакции, жалобы и события показов. "
             "После подключения Steam — SteamID, доступную библиотеку и игровое время. "
-            "Они используются для подбора людей; пароль Steam не запрашиваем.\n\n"
-            "В ленте показываем загруженное фото, имя, возраст, описание, цель, часовой пояс, расписание, выбранные и импортированные из Steam игры. "
+            "Для Dota 2 получаем публичный ранг из OpenDota и оцениваем наигрыш по данным матчей, "
+            "если Steam не отдал общий наигрыш. Эти данные используются для подбора.\n\n"
+            "В карточке показываем загруженное фото, имя, часовой пояс, описание и до пяти игр. "
+            "Если на карточке есть Dota 2 и получен ранг, он отображается рядом с названием. "
+            "Людям в подборке также показываем до пяти общих с ними игр, повлиявших на подбор. "
             "Telegram ID и SteamID публично не показываем. С твоего согласия при взаимном лайке бот покажет собеседнику твой @username. "
             "Назначенные операторы и разработчики могут просматривать и исправлять анкеты через закрытую панель; изменения журналируются. "
             "После совпадения общение идёт напрямую в личных сообщениях Telegram.\n\n"
@@ -493,9 +580,10 @@ def build_bot(service, settings, steam, public_steam=None):
                       if settings.public_url.startswith("https://") else "/model — скачать модель и отчёт")
         await message.answer(
             "PartyUp · одна анкета, единые настройки, общие игры. 18+.\n"
-            "Рекомендации: игры 65%, жанры 25%, расписание 10%. Веса экспериментальные.\n"
-            "Используется модель игровых интересов на Steam Video Games (Tamber, Kaggle, 2017), "
-            "ODbL 1.0 / DbCL 1.0. Это не модель романтической совместимости.\n"
+            "Подбор по игровой истории: главная общая игра 60%, другие общие игры 30%, жанры 10%. "
+            "При равном балле выше анкета с большим пересечением расписания.\n"
+            "Отдельно доступна исследовательская модель на Steam Video Games (Tamber, Kaggle, 2017), "
+            "ODbL 1.0 / DbCL 1.0.\n"
             '<a href="https://www.kaggle.com/datasets/tamber/steam-video-games">Источник данных</a> · '
             + model_link
         )
@@ -550,27 +638,43 @@ def build_bot(service, settings, steam, public_steam=None):
                 await prompt(message, state)
             return
         if current == Form.games.state:
-            await show_games(message, state)
+            data = await state.get_data()
+            if not data.get("reviewed") and draft_steam_highlights(data):
+                await review_profile(message, state)
+            else:
+                await show_games(message, state)
+            return
+        if current == Form.game_source.state:
+            await show_game_source(message, state)
+            return
+        if current == Form.registration_steam.state:
+            await prompt_registration_steam(message)
             return
         if current == Form.review.state:
             await review_profile(message, state)
             return
         if current == Form.photo.state:
-            await message.answer("Пришли фото или нажми «Пропустить».",
-                                 reply_markup=buttons([[("Пропустить", "photo:keep")]]))
+            data = await state.get_data()
+            if data.get("photo_flow") == "review":
+                await message.answer("Выбери аватар для анкеты.", reply_markup=avatar_buttons(back="review:open"))
+            elif data.get("new_registration"):
+                await prompt_registration_avatar(message, state)
+            else:
+                await message.answer("Пришли фото или нажми «Пропустить».",
+                                     reply_markup=buttons([[("Пропустить", "photo:keep")]]))
             return
-        await state.set_state(Form.consent)
-        await message.answer("<b>PartyUp · найди своих</b>\nЗнакомства, отношения и пати через общие игры. "
-                             "Одна анкета, никаких отдельных режимов.\n\nБот 18+. Перед регистрацией прочитай /privacy. "
-                             "Подтверди совершеннолетие и согласие на обработку данных для работы бота.",
-                             reply_markup=buttons([[("Мне 18+, согласен / согласна", "consent:yes")]]))
+        await begin_registration(message, state)
+
+    async def begin_registration(message, state):
+        await state.set_data({"step_index": 0, "form": {}, "selected": [],
+                              "short_registration": True, "new_registration": True})
+        await prompt(message, state)
 
     @router.callback_query(Form.consent, F.data == "consent:yes")
     async def consent(callback, state: FSMContext):
         await callback.answer()
-        await state.set_data({"step_index": 0, "form": {}, "selected": [], "short_registration": True})
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await prompt(callback.message, state)
+        await clear_buttons(callback.message)
+        await begin_registration(callback.message, state)
 
     @router.message(Command("edit"))
     async def edit(message, state: FSMContext):
@@ -621,10 +725,9 @@ def build_bot(service, settings, steam, public_steam=None):
         elif field == "photo":
             await state.update_data(photo_flow="review")
             await state.set_state(Form.photo)
-            rows = [[("Оставить как есть", "photo:keep")]]
-            if data.get("draft_photo_file_id"):
-                rows.append([("Убрать фото", "photo:remove")])
-            await message.answer("Пришли фото для анкеты.", reply_markup=buttons(rows))
+            remove = not data.get("new_registration") and bool(data.get("draft_photo_file_id"))
+            await message.answer("Выбери аватар для анкеты.",
+                                 reply_markup=avatar_buttons(back="review:open", allow_removal=remove))
         elif field == "games":
             await state.update_data(previous_selected=data["selected"])
             await state.set_state(Form.games)
@@ -633,19 +736,27 @@ def build_bot(service, settings, steam, public_steam=None):
             await state.update_data(edit_field=field, edit_draft=True)
             await show_field(message, state, field, back="review:open")
         elif field == "publish":
+            steam_profile = PublicProfile(**data["draft_steam"]) if data.get("draft_steam") else None
             try:
-                draft = ProfileInput(**data["form"], game_ids=data["selected"])
-                service.save_profile(callback.from_user.id, draft, callback.from_user.username,
-                                     photo_file_id=data.get("draft_photo_file_id", PHOTO_UNCHANGED),
-                                     share_username=True)
+                draft, _ = draft_profile(data)
+                schedule_set = "start_hour" in data["form"] if data.get("new_registration") else None
+                user_id = service.save_profile(callback.from_user.id, draft, callback.from_user.username,
+                                               photo_file_id=data.get("draft_photo_file_id", PHOTO_UNCHANGED),
+                                               share_username=True, steam_profile=steam_profile,
+                                               use_default_avatar=data.get("draft_default_avatar", False),
+                                               schedule_set=schedule_set)
             except (ValidationError, DomainError) as error:
                 await message.answer("Не удалось сохранить анкету. " + escape(str(error)[:300]))
                 await review_profile(message, state)
                 return
             await state.clear()
             extra = "" if callback.from_user.username else "\nЧтобы собеседники могли написать тебе, добавь @username в настройках Telegram."
-            await message.answer("Анкета опубликована 💜 Найди своих или подключи Steam через /steam." + extra,
-                                 reply_markup=menu())
+            published = "Анкета опубликована 💜"
+            if steam_profile is None:
+                published += " Найди своих или подключи Steam через /steam."
+            await message.answer(published + extra, reply_markup=menu())
+            if steam_profile:
+                await show_feed(message, service.user(user_id))
 
     @router.message(Command("photo"))
     @router.message(F.text == "📷 Фото анкеты")
@@ -658,12 +769,9 @@ def build_bot(service, settings, steam, public_steam=None):
     async def open_photo(message, state, user):
         await state.set_data({"photo_flow": "profile"})
         await state.set_state(Form.photo)
-        rows = [[("Оставить как есть", "photo:keep")]]
-        if user.photo_file_id:
-            rows.insert(0, [("Удалить фото из анкеты", "photo:remove")])
-        await message.answer("Пришли одну фотографию обычным фото через скрепку Telegram. "
-                             "Она заменит текущее фото и будет видна в карточке анкеты. "
-                             "/cancel — отмена.", reply_markup=buttons(rows))
+        await message.answer("Выбери аватар для анкеты.",
+                             reply_markup=avatar_buttons(back="edit:menu",
+                                                         allow_removal=bool(user.photo_file_id or user.use_default_avatar)))
 
     @router.message(Form.photo, F.photo)
     async def receive_photo(message, state: FSMContext):
@@ -684,19 +792,28 @@ def build_bot(service, settings, steam, public_steam=None):
         except DomainError as error:
             await message.answer(escape(str(error)))
 
-    @router.callback_query(Form.photo, F.data.in_({"photo:keep", "photo:remove"}))
+    @router.callback_query(Form.photo, F.data.in_({"photo:upload", "photo:default", "photo:keep", "photo:remove"}))
     async def photo_choice(callback, state: FSMContext):
         await callback.answer()
         data = await state.get_data()
+        flow = data.get("photo_flow")
+        if callback.data == "photo:upload":
+            await callback.message.answer("Отправь одну фотографию через скрепку Telegram. Она появится в анкете.",
+                                          reply_markup=buttons([[("Выбрать стандартное", "photo:default")]]))
+            return
         removed = callback.data == "photo:remove"
-        if removed and data.get("photo_flow") not in {"registration", "review"}:
+        standard = callback.data == "photo:default"
+        if data.get("new_registration") and (flow == "registration" and not standard or flow == "review" and removed):
+            return
+        if (removed or standard) and flow not in {"registration", "review"}:
             user = service.user_by_telegram(callback.from_user.id)
             if not user or user.banned:
                 await callback.message.answer("Анкета недоступна.")
                 return
-            service.set_photo(user.id, None)
-        await callback.message.edit_reply_markup(reply_markup=None)
-        await finish_photo(callback.message, state, None if removed else PHOTO_UNCHANGED)
+            service.set_photo(user.id, None, use_default_avatar=standard)
+        await clear_buttons(callback.message)
+        await finish_photo(callback.message, state, None if removed or standard else PHOTO_UNCHANGED,
+                           use_default_avatar=standard)
 
     @router.message(Command("games"))
     async def edit_games(message, state: FSMContext):
@@ -851,14 +968,6 @@ def build_bot(service, settings, steam, public_steam=None):
             if not user.active:
                 service.toggle_active(user.id)
             await show_feed(message, service.user(user.id), replace=True)
-        elif action == "details" and args:
-            target = int(args[0])
-            entries = service.feed(user.id, limit=1, record_impressions=False, preferred_id=target)
-            if entries:
-                profile = entries[0]["profile"]
-                await message.answer(profile_text(profile))
-            else:
-                await message.answer("Анкета больше недоступна в этом поиске.")
 
     @router.message(Command("test"))
     async def test_profiles(message,state:FSMContext):
@@ -866,7 +975,7 @@ def build_bot(service, settings, steam, public_steam=None):
         if not user:
             return
         await state.clear()
-        await message.answer(f"🧪 Тестовых анкет с фотографиями Pinterest: {len(fixture_definitions())}. "
+        await message.answer(f"🧪 Тестовых анкет: {len(fixture_definitions())}. "
                              "Это примеры для проверки карточек и кнопок. В тестовом просмотре "
                              "возрастные фильтры и предпочтения не применяются. /find — обычный поиск.",
                              reply_markup=menu())
@@ -901,29 +1010,102 @@ def build_bot(service, settings, steam, public_steam=None):
         status = ("Ссылка Steam сохранена. " + ("Владение подтверждено." if user.steam_verified else "Владение аккаунтом не подтверждено.")) if user.steam_id else "Добавим игровой профиль по ссылке."
         status += "\n" + steam_status_text(service.public_profile(user))
         await message.answer(status + "\n\nПришли ссылку вида https://steamcommunity.com/id/ник или "
-                             "https://steamcommunity.com/profiles/SteamID. Получим доступные открытые игры. "
+                             "https://steamcommunity.com/profiles/SteamID. Получим доступные открытые игры "
+                             "и публичную статистику Dota 2 из OpenDota. "
                              "Если Steam требует входа или скрывает библиотеку, выбрать игры можно через /games. "
                              "Пароль и API-ключ не нужны. /cancel — вернуться.",
                              reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
-    async def import_public(message, user, value):
-        if public_steam is None:
-            raise DomainError("Парсер Steam временно недоступен")
-        profile = await public_steam.fetch(value)
-        service.link_public_profile(user.id, profile.steam_id)
-        if profile.coverage != "profile_only":
-            service.import_games(user.id, profile.games, expected_steam_id=profile.steam_id,
-                                 complete=profile.coverage == "library")
-        else:
-            service.mark_steam_checked(user.id)
-        text = "Ссылка Steam сохранена.\n" + steam_status_text(service.public_profile(service.user(user.id)))
-        if profile.games:
-            preview = ", ".join(str(game.get("name", "Steam"))[:64] for game in profile.games[:5])
-            text += "\nВ анкете теперь видны: " + preview
+    async def fetch_steam_profile(value):
+        if steam is not None:
+            return await steam.fetch_profile(value, public_steam)
+        if public_steam is not None:
+            return await public_steam.fetch(value)
+        raise DomainError("Парсер Steam временно недоступен")
+
+    async def import_public(message, user, value, *, refresh=False):
+        profile = await fetch_steam_profile(value)
+        service.save_public_steam(user.id, profile, expected_steam_id=user.steam_id if refresh else None)
+        saved = service.public_profile(service.user(user.id))
+        text = "Ссылка Steam сохранена.\n" + steam_status_text(saved)
         if profile.warning:
             text += "\n" + profile.warning
+        if saved["dota_match_estimate"]:
+            text += "\nДля Dota 2 учтена оценка наигрыша по данным OpenDota."
         text += "\n/profile — посмотреть анкету. /games — выбрать актуальные игры."
         await message.answer(escape(text), reply_markup=menu())
+
+    async def steam_attempt_allowed(message, state):
+        data = await state.get_data()
+        if data.get("steam_attempt_at") and (utcnow() - datetime.fromisoformat(data["steam_attempt_at"])).total_seconds() < 10:
+            await message.answer("Подожди несколько секунд перед следующим запросом Steam.")
+            return False
+        await state.update_data(steam_attempt_at=utcnow().isoformat())
+        return True
+
+    @router.callback_query(StateFilter(Form.game_source, Form.games, Form.review), F.data == "registration:steam")
+    async def registration_steam(callback, state: FSMContext):
+        await callback.answer()
+        data = await state.get_data()
+        if not data.get("short_registration") or data.get("games_flow") == "edit":
+            return
+        await clear_buttons(callback.message)
+        await state.set_state(Form.registration_steam)
+        await prompt_registration_steam(callback.message)
+
+    @router.callback_query(StateFilter(Form.registration_steam, Form.games),
+                           F.data.in_({"registration:source", "registration:games"}))
+    async def registration_source(callback, state: FSMContext):
+        await callback.answer()
+        data = await state.get_data()
+        if not data.get("short_registration") or data.get("games_flow") == "edit":
+            return
+        await clear_buttons(callback.message)
+        if data.get("reviewed"):
+            await review_profile(callback.message, state)
+        else:
+            await show_game_source(callback.message, state)
+
+    @router.callback_query(StateFilter(Form.game_source, Form.registration_steam), F.data == "registration:manual")
+    async def registration_games(callback, state: FSMContext):
+        await callback.answer()
+        await clear_buttons(callback.message)
+        await state.update_data(draft_steam=None)
+        await state.set_state(Form.games)
+        await show_games(callback.message, state)
+
+    @router.message(Form.registration_steam, F.text)
+    async def registration_steam_link(message, state: FSMContext):
+        if not await steam_attempt_allowed(message, state):
+            return
+        try:
+            profile = await fetch_steam_profile(message.text)
+        except DomainError as error:
+            await message.answer(escape(str(error)),
+                                 reply_markup=buttons([[("Выбрать игры из списка", "registration:manual")]]))
+            return
+        data = await state.get_data()
+        previous_ids = {row["appid"] for row in (data.get("draft_steam") or {}).get("games", [])}
+        selected = [app_id for app_id in data.get("selected", []) if app_id not in previous_ids]
+        data = await state.update_data(draft_steam=asdict(profile), selected=selected)
+        has_playtime = bool(draft_steam_highlights(data))
+        if profile.coverage == "profile_only":
+            status = "Ссылка Steam принята. Steam не предоставил список игр и часы."
+        else:
+            status = (f"Из библиотеки Steam получено игр: {len(profile.games)}."
+                      if profile.coverage == "library" and profile.games
+                      else steam_status_text({"steam_import_status": profile.coverage,
+                                              "steam_game_count": len(profile.games)}))
+        if profile.dota_match_minutes:
+            status += " Для Dota 2 учтена оценка наигрыша по данным OpenDota."
+        status += (" Бот сам выбрал игры для карточки." if has_playtime
+                   else " Можно продолжить с играми, выбранными вручную.")
+        await message.answer(status)
+        if has_playtime:
+            await review_profile(message, state)
+        else:
+            await state.set_state(Form.games)
+            await show_games(message, state)
 
     @router.callback_query(F.data.startswith("steam:"))
     async def steam_action(callback, state: FSMContext):
@@ -952,12 +1134,8 @@ def build_bot(service, settings, steam, public_steam=None):
                                               + f"\nСледующая проверка доступна через {wait_minutes} мин.")
                 return
         try:
-            if settings.steam_api_key:
-                games = await steam.owned_games(user.steam_id)
-                count = service.import_games(user.id, games, expected_steam_id=user.steam_id)
-                await callback.message.answer(f"Импортировано игр: {count}. Выбранные тобой интересы сохранены.")
-            else:
-                await import_public(callback.message, user, "https://steamcommunity.com/profiles/" + user.steam_id)
+            await import_public(callback.message, user, "https://steamcommunity.com/profiles/" + user.steam_id,
+                                refresh=True)
             await state.clear()
         except DomainError as error:
             await callback.message.answer(escape(str(error)))
@@ -967,11 +1145,8 @@ def build_bot(service, settings, steam, public_steam=None):
         user = await actor(message)
         if not user:
             return
-        data = await state.get_data()
-        if data.get("steam_attempt_at") and (utcnow() - datetime.fromisoformat(data["steam_attempt_at"])).total_seconds() < 10:
-            await message.answer("Подожди несколько секунд перед следующим запросом Steam.")
+        if not await steam_attempt_allowed(message, state):
             return
-        await state.update_data(steam_attempt_at=utcnow().isoformat())
         try:
             await import_public(message, user, message.text)
             await state.clear()
@@ -1081,11 +1256,18 @@ def build_bot(service, settings, steam, public_steam=None):
     async def step_text(message, state: FSMContext):
         await consume_step(message, state, message.from_user, message.text)
 
-    @router.callback_query(StateFilter(Form.step, Form.games), F.data == "form:back")
+    @router.callback_query(StateFilter(Form.step, Form.games, Form.game_source, Form.photo), F.data == "form:back")
     async def back_step(callback, state: FSMContext):
         await callback.answer()
         data = await state.get_data()
         if data.get("edit_field") or data.get("games_flow") == "edit":
+            return
+        current = await state.get_state()
+        if current == Form.photo.state and data.get("photo_flow") != "registration":
+            return
+        if current == Form.game_source.state and data.get("new_registration"):
+            await clear_buttons(callback.message)
+            await prompt_registration_avatar(callback.message, state)
             return
         await state.update_data(step_index=max(0, data.get("step_index", 0) - 1))
         await clear_buttons(callback.message)
@@ -1125,7 +1307,11 @@ def build_bot(service, settings, steam, public_steam=None):
             await callback.message.edit_reply_markup(reply_markup=None)
             await callback.message.answer("Актуальные игры сохранены.", reply_markup=menu())
             return
+        if not value.isascii() or not value.isdecimal():
+            return
         app_id = int(value)
+        if app_id not in registration_catalog(data):
+            return
         if app_id in selected:
             selected.remove(app_id)
         elif len(selected) < 10:
@@ -1142,12 +1328,12 @@ def build_bot(service, settings, steam, public_steam=None):
     async def unsupported_photo(message):
         await message.answer("Нужно обычное фото: скрепка → Фото или видео. "
                              "Изображения файлом, видео и ссылки пока не подходят. "
-                             "Можно продолжить без нового фото или выйти через /cancel.")
+                             "Можно выбрать стандартный аватар в меню или выйти через /cancel.")
 
     @router.message(F.photo)
     async def photo_hint(message):
         await message.answer("Добавить или заменить фото анкеты можно через /photo. "
-                             "При регистрации фото можно добавить на этапе предпросмотра.")
+                             "При регистрации бот предложит выбрать аватар перед подключением Steam.")
 
     @router.message()
     async def fallback(message):

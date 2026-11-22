@@ -31,8 +31,10 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
     start_hour: Mapped[int] = mapped_column(default=19)
     end_hour: Mapped[int] = mapped_column(default=23)
+    schedule_set: Mapped[bool] = mapped_column(Boolean, default=True)
     bio: Mapped[str] = mapped_column(Text, default="")
     photo_file_id: Mapped[str | None] = mapped_column(String(1024))
+    use_default_avatar: Mapped[bool] = mapped_column(Boolean, default=False)
     test_photo_override: Mapped[bool] = mapped_column(Boolean, default=False)
     language: Mapped[str] = mapped_column(String(16), default="ru")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -43,6 +45,7 @@ class User(Base):
     steam_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     steam_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
     steam_import_status: Mapped[str] = mapped_column(String(24), default="not_loaded")
+    dota_rank_tier: Mapped[int | None]
     consent_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_active: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     games: Mapped[list["UserGame"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
@@ -63,9 +66,14 @@ class UserGame(Base):
     app_id: Mapped[int] = mapped_column(ForeignKey("games.app_id"), primary_key=True)
     minutes: Mapped[int] = mapped_column(default=0)
     recent_minutes: Mapped[int] = mapped_column(default=0)
+    dota_match_minutes: Mapped[int] = mapped_column(default=0)
     selected: Mapped[bool] = mapped_column(Boolean, default=False)
     imported: Mapped[bool] = mapped_column(Boolean, default=False)
     game: Mapped[Game] = relationship(lazy="joined")
+
+    @property
+    def effective_minutes(self) -> int:
+        return self.minutes or self.dota_match_minutes or 0
 
 
 class Reaction(Base):

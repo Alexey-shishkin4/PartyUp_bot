@@ -1,4 +1,4 @@
-"""Explicitly fictional fixtures; never represent people in Pinterest photographs."""
+"""Fictional profiles and libraries for testing the feed."""
 import json
 from functools import lru_cache
 
@@ -20,7 +20,7 @@ def fixture_photo(telegram_id):
     if not row:
         return None
     directory = (ROOT / "data/test_profiles").resolve()
-    path = (directory / (row["slug"] + ".jpg")).resolve()
+    path = (directory / row.get("photo", row["slug"] + ".jpg")).resolve()
     return path if path.parent == directory and path.is_file() else None
 
 
@@ -44,13 +44,23 @@ def seed_test_profiles(service):
             continue
         if fixture_photo(telegram_id) is None:
             raise RuntimeError("Missing test-profile photo; check the fixture asset directory")
-        profile = ProfileInput(name=row["name"],age=row["age"],gender="female",looking_for="any",
-                               age_min=18,age_max=99,purpose="both",timezone=row["timezone"],
-                               start_hour=row["start_hour"],end_hour=row["end_hour"],bio=row["bio"],
-                               game_ids=row["game_ids"])
         # Existing fixtures can be edited in the developer panel; retain those
         # fields across restarts rather than restoring the manifest defaults.
-        user_id = existing.id if existing else service.save_profile(telegram_id,profile,test_profile=True)
+        if existing:
+            user_id = existing.id
+        else:
+            games = [
+                {"appid": game["app_id"], "name": game.get("name", f"Steam {game['app_id']}"),
+                 "playtime_forever": game["hours"] * 60,
+                 "playtime_2weeks": game.get("recent_hours", 0) * 60}
+                for game in row.get("library", [])
+            ]
+            profile = ProfileInput.model_validate({
+                "name": row["name"], "age": row["age"], "gender": row.get("gender", "female"),
+                "timezone": row["timezone"], "start_hour": row["start_hour"], "end_hour": row["end_hour"],
+                "bio": row["bio"], "game_ids": row.get("game_ids", []),
+            }, context={"allow_empty_games": bool(games)})
+            user_id = service.save_profile(telegram_id, profile, test_profile=True, test_library=games)
         # Fixture assets may have been replaced; re-upload their current bytes on
         # first display instead of reusing a Telegram file_id for the old portrait.
         if not existing or not existing.test_photo_override:

@@ -6,8 +6,9 @@ from datetime import timedelta
 from sqlalchemy import delete, func, or_, select
 
 from .db import Database
+from .dota import DOTA_APP_ID, dota_game_name
 from .models import Block, Event, FSMRecord, Game, LoginTicket, Match, Reaction, Report, User, UserGame, utcnow
-from .recommender import AffinityModel, compatible, score
+from .recommender import CARD_GAME_LIMIT, AffinityModel, compatible, score, steam_card_game_ids
 from .schemas import ProfileInput
 
 PURPOSES = {"friends": "Друзья и тиммейты", "romance": "Отношения", "both": "Общение и отношения"}
@@ -37,7 +38,8 @@ class Service:
             return session.get(User, user_id)
 
     def save_profile(self, telegram_id: int, profile: ProfileInput | None, username=None, demo=False,
-                     photo_file_id=PHOTO_UNCHANGED, test_profile=False, *, share_username=None, changes=None):
+                     photo_file_id=PHOTO_UNCHANGED, test_profile=False, *, share_username=None, changes=None,
+                     steam_profile=None, use_default_avatar=False, schedule_set=None, test_library=()):
         if photo_file_id is not PHOTO_UNCHANGED:
             self.validate_photo(photo_file_id)
         with self.lock, self.db.session.begin() as session:
@@ -49,25 +51,44 @@ class Service:
             if changes is not None:
                 if not user:
                     raise DomainError("Анкета недоступна")
-                profile = ProfileInput.model_validate({**self.public_profile(user), **changes})
+                allow_empty = "game_ids" not in changes or any(
+                    entry.effective_minutes or entry.recent_minutes for entry in user.games
+                )
+                profile = ProfileInput.model_validate(
+                    {**self.public_profile(user), **changes}, context={"allow_empty_games": allow_empty}
+                )
             if profile is None:
                 raise DomainError("Нет данных анкеты")
-            games = list(session.scalars(select(Game).where(Game.app_id.in_(profile.game_ids))))
-            if len(games) != len(profile.game_ids):
-                raise DomainError("Одна из выбранных игр отсутствует в каталоге")
             values = profile.model_dump(exclude={"game_ids"})
-            if user is None:
+            creating = user is None
+            if creating:
                 user = User(telegram_id=telegram_id, is_demo=demo, is_test=test_profile, **values)
                 session.add(user)
                 session.flush()
             else:
                 for key, value in values.items():
                     setattr(user, key, value)
+            if steam_profile is not None:
+                self._save_public_steam(session, user, steam_profile)
+            if creating and test_profile and test_library:
+                self._store_steam_games(session, user, test_library, complete=True)
+            if creating and not profile.game_ids and not any(
+                entry.effective_minutes or entry.recent_minutes for entry in user.games
+            ):
+                raise DomainError("Выбери хотя бы одну игру или загрузи наигранные часы из Steam")
+            games = list(session.scalars(select(Game.app_id).where(Game.app_id.in_(profile.game_ids))))
+            if len(games) != len(profile.game_ids):
+                raise DomainError("Одна из выбранных игр отсутствует в каталоге")
             user.username = username
             if share_username is not None:
                 user.share_username = share_username
             if photo_file_id is not PHOTO_UNCHANGED:
                 user.photo_file_id = photo_file_id
+                user.use_default_avatar = use_default_avatar and photo_file_id is None
+            if schedule_set is not None:
+                user.schedule_set = schedule_set
+            elif changes and {"start_hour", "end_hour"} & changes.keys():
+                user.schedule_set = True
             user.last_active = utcnow()
             for entry in user.games:
                 entry.selected = entry.app_id in profile.game_ids
@@ -124,13 +145,14 @@ class Service:
                                     or any(char.isspace() for char in file_id)):
             raise DomainError("Некорректная фотография. Отправьте её заново через Telegram")
 
-    def set_photo(self, user_id: int, file_id: str | None):
+    def set_photo(self, user_id: int, file_id: str | None, *, use_default_avatar=False):
         self.validate_photo(file_id)
         with self.lock, self.db.session.begin() as session:
             user = session.get(User, user_id)
             if not user or user.banned:
                 raise DomainError("Анкета недоступна")
             user.photo_file_id = file_id
+            user.use_default_avatar = use_default_avatar and file_id is None
             user.last_active = utcnow()
 
     def photo_file(self, user_id: int):
@@ -156,10 +178,14 @@ class Service:
         if user.is_test:
             from .test_profiles import fixture_definitions
             test_info = fixture_definitions().get(user.telegram_id)
-        selected = [entry for entry in user.games if entry.selected]
-        imported = sorted((entry for entry in user.games if entry.imported),
-                          key=lambda entry: (-entry.recent_minutes, -entry.minutes, entry.game.name.casefold()))
-        visible = {entry.app_id: entry.game.name for entry in [*selected, *imported]}
+        selected = sorted((entry for entry in user.games if entry.selected), key=lambda entry: entry.app_id)
+        imported = [entry for entry in user.games if entry.imported]
+        automatic = [entry for entry in user.games if entry.imported or entry.dota_match_minutes]
+        highlights = steam_card_game_ids((entry.app_id, entry.effective_minutes, entry.recent_minutes)
+                                        for entry in automatic)
+        entries = {entry.app_id: entry for entry in user.games}
+        card_games = [entries[app_id] for app_id in highlights] or selected[:CARD_GAME_LIMIT]
+        visible = [dota_game_name(entry.app_id, entry.game.name, user.dota_rank_tier) for entry in card_games]
         status = user.steam_import_status
         if status == "not_loaded" and imported:
             # Existing installations already have Steam games but predate status tracking.
@@ -167,21 +193,23 @@ class Service:
         return {
             "id": user.id, "name": user.name, "age": user.age,
             "is_test": user.is_test,
-            "photo_source_url": test_info["pin_url"] if test_info and not user.test_photo_override else None,
+            "photo_source_url": test_info.get("pin_url") if test_info and not user.test_photo_override else None,
             "gender": user.gender, "looking_for": user.looking_for,
             "age_min": user.age_min, "age_max": user.age_max,
             "purpose": user.purpose, "purpose_label": PURPOSES[user.purpose],
             "timezone": user.timezone, "start_hour": user.start_hour, "end_hour": user.end_hour,
+            "schedule_set": user.schedule_set,
             "bio": user.bio, "language": user.language, "active": user.active,
-            "has_photo": bool(user.photo_file_id) or bool(test_info and not user.test_photo_override),
+            "has_photo": bool(user.photo_file_id or user.use_default_avatar or (test_info and not user.test_photo_override)),
+            "use_default_avatar": user.use_default_avatar,
             "steam_connected": bool(user.steam_id),
             "steam_verified": user.steam_verified,
             "steam_import_status": status,
             "steam_game_count": len(imported),
-            "steam_games": [entry.game.name for entry in imported[:10]],
+            "dota_match_estimate": any(item.dota_match_minutes and not item.minutes for item in automatic),
             "selected_games": [entry.game.name for entry in selected],
-            "game_ids": [entry.app_id for entry in user.games if entry.selected],
-            "games": list(visible.values())[:10],
+            "game_ids": [entry.app_id for entry in selected],
+            "games": visible,
             "games_count": len(visible),
         }
 
@@ -236,7 +264,9 @@ class Service:
                      same_game_now=focus is not None and self.current_game(candidate) == focus)
                 for candidate in candidates if test_only or compatible(actor, candidate)
             ]
-            ranked.sort(key=lambda row: (not row["same_game_now"], -row["score"], row["profile"]["id"]))
+            ranked.sort(key=lambda row: (
+                not row["same_game_now"], -row["score"], -row["components"]["time"], row["profile"]["id"]
+            ))
             for position, row in enumerate(ranked[:limit]):
                 if record_impressions:
                     session.add(Event(actor_id=actor_id, target_id=row["profile"]["id"], kind="test_impression" if row["profile"]["is_test"] else "impression",
@@ -408,7 +438,7 @@ class Service:
             ))
             if duplicate:
                 raise DomainError("Этот Steam уже подключён к другой анкете")
-            user.steam_id = steam_id
+            self._link_public_steam(user, steam_id)
             user.steam_verified = True
             session.execute(delete(LoginTicket).where(LoginTicket.user_id == user_id))
             return user_id
@@ -420,20 +450,62 @@ class Service:
         """
         with self.lock, self.db.session.begin() as session:
             user = session.get(User, user_id)
-            if not user or user.banned or user.is_demo:
-                raise DomainError("Добавление ссылки Steam недоступно")
-            if user.steam_id != steam_id:
-                for entry in list(user.games):
-                    if entry.imported:
-                        if entry.selected:
-                            entry.imported = False
-                            entry.minutes = entry.recent_minutes = 0
-                        else:
-                            user.games.remove(entry)
-                user.steam_checked_at = None
-                user.steam_import_status = "not_loaded"
-                user.steam_verified = False
-            user.steam_id = steam_id
+            self._link_public_steam(user, steam_id)
+
+    @staticmethod
+    def _link_public_steam(user, steam_id):
+        if not user or user.banned or user.is_demo:
+            raise DomainError("Добавление ссылки Steam недоступно")
+        if user.steam_id != steam_id:
+            Service._clear_steam_data(user)
+        user.steam_id = steam_id
+
+    @staticmethod
+    def _clear_steam_data(user):
+        for entry in list(user.games):
+            if entry.imported or entry.dota_match_minutes:
+                if entry.selected:
+                    entry.imported = False
+                    entry.minutes = entry.recent_minutes = entry.dota_match_minutes = 0
+                else:
+                    user.games.remove(entry)
+        user.steam_checked_at = None
+        user.steam_import_status = "not_loaded"
+        user.steam_verified = False
+        user.dota_rank_tier = None
+
+    def save_public_steam(self, user_id, profile, *, expected_steam_id=None):
+        with self.lock, self.db.session.begin() as session:
+            user = session.get(User, user_id)
+            if expected_steam_id is not None and (not user or user.steam_id != expected_steam_id
+                                                  or profile.steam_id != expected_steam_id):
+                raise DomainError("Steam уже отключён или изменён. Импорт отменён")
+            self._save_public_steam(session, user, profile)
+
+    def _save_public_steam(self, session, user, profile):
+        self._link_public_steam(user, profile.steam_id)
+        self._store_dota_stats(user, profile)
+        if profile.coverage == "profile_only":
+            user.steam_checked_at = utcnow()
+            user.steam_import_status = "profile_only"
+        else:
+            self._store_steam_games(session, user, profile.games, complete=profile.coverage == "library")
+
+    @staticmethod
+    def _store_dota_stats(user, profile):
+        if profile.dota_rank_checked:
+            user.dota_rank_tier = profile.dota_rank_tier
+        minutes = profile.dota_match_minutes
+        if minutes is None:
+            return
+        entry = next((game for game in user.games if game.app_id == DOTA_APP_ID), None)
+        if entry is None:
+            if minutes:
+                user.games.append(UserGame(app_id=DOTA_APP_ID, dota_match_minutes=minutes))
+            return
+        entry.dota_match_minutes = minutes
+        if not minutes and not entry.imported and not entry.selected:
+            user.games.remove(entry)
 
     def import_games(self, user_id: int, games: list[dict], expected_steam_id: str | None = None,
                      complete: bool = True):
@@ -443,32 +515,38 @@ class Service:
                 raise DomainError("Анкета недоступна")
             if expected_steam_id is not None and user.steam_id != expected_steam_id:
                 raise DomainError("Steam уже отключён или изменён. Импорт отменён")
-            entries = {entry.app_id: entry for entry in user.games}
-            returned = {row["appid"] for row in games}
-            for entry in list(user.games):
-                if complete and entry.imported and entry.app_id not in returned:
-                    if entry.selected:
+            self._store_steam_games(session, user, games, complete=complete)
+            return len(games)
+
+    @staticmethod
+    def _store_steam_games(session, user, games, *, complete):
+        entries = {entry.app_id: entry for entry in user.games}
+        returned = {row["appid"] for row in games}
+        if complete:
+            for app_id, entry in entries.items():
+                if entry.imported and app_id not in returned:
+                    if entry.selected or entry.dota_match_minutes:
                         entry.imported = False
                         entry.minutes = entry.recent_minutes = 0
                     else:
                         user.games.remove(entry)
-            for row in games:
-                app_id = row["appid"]
-                if not session.get(Game, app_id):
-                    session.add(Game(app_id=app_id, name=row.get("name", f"Steam {app_id}"),
-                                     genres=[], aliases=[], coop=False))
-                    session.flush()
-                entry = entries.get(app_id)
-                if entry is None:
-                    entry = UserGame(app_id=app_id, selected=False)
-                    user.games.append(entry)
-                imported_minutes = max(0, int(row.get("playtime_forever", 0)))
-                entry.minutes = imported_minutes if complete else max(entry.minutes or 0, imported_minutes)
-                entry.recent_minutes = max(0, int(row.get("playtime_2weeks", 0)))
-                entry.imported = True
-            user.steam_checked_at = utcnow()
-            user.steam_import_status = "library" if complete else "recent"
-            return len(games)
+        existing_games = set(session.scalars(select(Game.app_id).where(Game.app_id.in_(returned))))
+        for row in games:
+            app_id = row["appid"]
+            if app_id not in existing_games:
+                session.add(Game(app_id=app_id, name=row.get("name", f"Steam {app_id}"),
+                                 genres=[], aliases=[], coop=False))
+                existing_games.add(app_id)
+            entry = entries.get(app_id)
+            if entry is None:
+                entry = entries[app_id] = UserGame(app_id=app_id, selected=False)
+                user.games.append(entry)
+            imported_minutes = max(0, int(row.get("playtime_forever", 0)))
+            entry.minutes = imported_minutes if complete else max(entry.minutes or 0, imported_minutes)
+            entry.recent_minutes = max(0, int(row.get("playtime_2weeks", 0)))
+            entry.imported = True
+        user.steam_checked_at = utcnow()
+        user.steam_import_status = "library" if complete else "recent"
 
     def mark_steam_checked(self, user_id: int, status="profile_only"):
         if status not in {"profile_only", "error"}:
@@ -485,16 +563,7 @@ class Service:
             if not user:
                 raise DomainError("Анкета недоступна")
             user.steam_id = None
-            user.steam_verified = False
-            user.steam_checked_at = None
-            user.steam_import_status = "not_loaded"
-            for entry in list(user.games):
-                if entry.imported:
-                    if entry.selected:
-                        entry.imported = False
-                        entry.minutes = entry.recent_minutes = 0
-                    else:
-                        user.games.remove(entry)
+            self._clear_steam_data(user)
             session.execute(delete(LoginTicket).where(LoginTicket.user_id == user_id))
 
     def record(self, actor_id: int, target_id: int, kind: str, details=None):

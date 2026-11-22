@@ -108,16 +108,18 @@ class DeveloperService:
             user = session.get(User, target)
             if not user:
                 raise DomainError("Анкета не найдена")
-            values = ProfileInput.model_validate(self.service.public_profile(user)).model_dump()
+            values = self.service.public_profile(user)
             values.update({key: value for key, value in changes.items() if key in allowed})
             try:
-                validated = ProfileInput.model_validate(values)
+                validated = ProfileInput.model_validate(values, context={"allow_empty_games": True})
             except ValidationError:
                 raise DomainError(
                     "Проверь значение: возраст 18–99, корректные интервалы, часовой пояс и длину текста"
                 ) from None
             for key, value in changes.items():
                 setattr(user, key, getattr(validated, key) if key in allowed else value)
+            if {"start_hour", "end_hour"} & changes.keys():
+                user.schedule_set = True
             self.audit(session, actor, target, "profile_update", {"fields": sorted(changes)})
         return self.read_profile(actor, target)
 
@@ -149,6 +151,7 @@ class DeveloperService:
             if not user:
                 raise DomainError("Анкета не найдена")
             user.photo_file_id = file_id
+            user.use_default_avatar = False
             if user.is_test:
                 user.test_photo_override = True
             self.audit(session, actor, target, "photo_update", {"present": file_id is not None})

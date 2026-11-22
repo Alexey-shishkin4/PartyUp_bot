@@ -17,6 +17,7 @@ from .models import Block, Event, Match, Reaction, Report
 from .recommender import AffinityModel
 from .schemas import ProfileInput, ReactionInput
 from .seed import seed_demo
+from .dota import OpenDotaClient
 from .service import DomainError, Service
 from .steam import SteamClient
 from .steam_public import PublicSteamParser
@@ -37,7 +38,7 @@ def create_app(settings=None, database=None, start_bot=True):
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("httpcore").setLevel(logging.WARNING)
         client = httpx.AsyncClient(timeout=20, follow_redirects=False)
-        app.state.steam = SteamClient(settings.steam_api_key, client)
+        app.state.steam = SteamClient(settings.steam_api_key, client, OpenDotaClient(client))
         app.state.public_steam = PublicSteamParser(client)
         app.state.bot = None
         app.state.polling = None
@@ -118,13 +119,14 @@ def create_app(settings=None, database=None, start_bot=True):
         report = service.model.data.get("metrics", {})
         return (
             "<html lang='ru'><meta charset='utf-8'><title>PartyUp · модель</title><h1>Модель игровых интересов</h1>"
-            "<p>Игры: 65%, жанры: 25%, время: 10%. Обученная item-item модель — дополнительный сигнал сходства игр.</p>"
+            "<p>В подборе 60% веса у главной общей игры, 30% у остальных общих игр и 10% у жанров. "
+            "При равных баллах анкеты сортируются по пересечению расписания.</p>"
             "<p>Содержит информацию из Steam Video Games (Tamber, Kaggle), доступной по ODbL 1.0 / DbCL 1.0.</p>"
             '<p><a href="https://www.kaggle.com/datasets/tamber/steam-video-games">Исходный датасет</a> · '
             '<a href="/model/affinity.json">Производная база связей игр (ODbL)</a> · '
             '<a href="/model/report.json">Отчёт</a> · <a href="/model/license">ODbL</a> · '
             '<a href="/model/contents-license">DbCL</a></p>'
-            f"<p>Hit rate@10: {report.get('hit_rate_at_10', 'нет данных')}; популярность: "
+            f"<p>Отдельный эксперимент с item-item моделью. Hit rate@10: {report.get('hit_rate_at_10', 'нет данных')}; популярность: "
             f"{report.get('popularity_hit_rate_at_10', 'нет данных')}.</p>"
             "<p>Данные 2017 года. Метрика оценивает восстановление интереса к игре, а не совместимость людей. "
             "Для новых игр применяется пересечение выбранных игр и редакционный каталог жанров. "
@@ -209,9 +211,13 @@ def create_app(settings=None, database=None, start_bot=True):
         user = service.user(user_id)
         text = "Аккаунт Steam подтверждён."
         try:
-            games = await app.state.steam.owned_games(steam_id)
-            count = service.import_games(user_id, games, expected_steam_id=steam_id)
-            text += f" Импортировано игр: {count}."
+            profile = await app.state.steam.game_profile(steam_id)
+            service.save_public_steam(user_id, profile, expected_steam_id=steam_id)
+            count = len(profile.games)
+            source = "недавних игр" if profile.coverage == "recent" else "игр"
+            text += f" Импортировано {source}: {count}."
+            if profile.dota_match_minutes:
+                text += " Для Dota 2 учтена оценка наигрыша по данным OpenDota."
         except DomainError as error:
             text += " " + str(error)
         if app.state.bot:
