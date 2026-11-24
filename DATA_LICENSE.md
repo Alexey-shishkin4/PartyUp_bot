@@ -8,7 +8,7 @@ Kaggle lists its license as “Database: Open Database, Contents: Database Conte
 The source database is made available under the Open Database License (ODbL)
 1.0; its contents under the Database Contents License (DbCL) 1.0.
 
-The derived database **data/affinity.json**, containing aggregate item-item
+The derived database **app/resources/affinity.json**, containing aggregate item-item
 similarities, is distributed under **ODbL 1.0**, with contents under **DbCL 1.0**.
 The application code is separately licensed under MIT. The live application
 database of consented profiles is stored separately from this aggregate file.
@@ -23,7 +23,7 @@ are available at `/model` and from the bot's `/about` command.
 Reproduction: download `steam-200k.csv` from the source above and run
 `python scripts/train_model.py --csv PATH/steam-200k.csv`.
 Exact source SHA-256 and training/evaluation settings are in
-`data/model_report.json`; source metadata is in `data/dataset_metadata.json`.
+`app/resources/model_report.json`; source metadata is in `app/resources/dataset_metadata.json`.
 
 No Kaggle account IDs, account profiles or user-level interactions are included
 in the model, synthetic demo profiles, or distributed application database.
