@@ -13,6 +13,9 @@ class Settings(BaseSettings):
 
     bot_token: str = ""
     steam_api_key: str = ""
+    api_fortnite_key: SecretStr = SecretStr("")
+    api_fortnite_daily_limit: int = Field(default=10_000, ge=1)
+    fortnite_api_key: SecretStr = SecretStr("")
     admin_ids: str = ""
     developer_ids: str = ""
     enable_test_profiles: bool = False

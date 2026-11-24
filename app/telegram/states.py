@@ -12,3 +12,7 @@ class Form(StatesGroup):
     photo = State()
     review = State()
     focus = State()
+
+
+class FortniteForm(StatesGroup):
+    nickname = State()

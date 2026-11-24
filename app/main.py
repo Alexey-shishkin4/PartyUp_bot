@@ -7,6 +7,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramUnauthorizedError
 from aiogram.utils.token import TokenValidationError, validate_token
 
 from app.config import Settings
+from app.integrations.fortnite import FortniteClient
 from app.integrations.opendota import OpenDotaClient
 from app.integrations.steam import SteamClient
 from app.integrations.steam_public import PublicSteamParser
@@ -40,7 +41,13 @@ async def run(settings: Settings):
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             steam = SteamClient(settings.steam_api_key, client, OpenDotaClient(client))
             fetch_steam_profile = partial(steam.fetch_profile, public_steam=PublicSteamParser(client))
-            bot, dispatcher = build_bot(services, settings, fetch_steam_profile)
+            fortnite = FortniteClient(
+                client,
+                api_fortnite_key=settings.api_fortnite_key.get_secret_value(),
+                fortnite_api_key=settings.fortnite_api_key.get_secret_value(),
+                daily_limit=settings.api_fortnite_daily_limit,
+            )
+            bot, dispatcher = build_bot(services, settings, fetch_steam_profile, fortnite.fetch)
             try:
                 me = await bot.me()
                 log.info("PartyUp запущен как @%s", me.username)

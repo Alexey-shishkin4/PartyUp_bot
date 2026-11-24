@@ -1,5 +1,5 @@
 FROM python:3.12-slim AS build
-COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /usr/local/bin/uv
+RUN python -m pip install --no-cache-dir --only-binary=:all: uv==0.11.3
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project --no-python-downloads
