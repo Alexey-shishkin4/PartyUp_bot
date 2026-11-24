@@ -47,7 +47,7 @@ def fit(users, titles):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--csv", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=ROOT / "data/affinity.json")
+    parser.add_argument("--output", type=Path, default=ROOT / "app/resources/affinity.json")
     args = parser.parse_args()
     users, count, names = defaultdict(dict), 0, {}
     with args.csv.open(encoding="utf-8-sig", newline="") as file:
