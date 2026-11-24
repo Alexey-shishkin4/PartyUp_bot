@@ -143,3 +143,33 @@ class DeveloperAudit(Base):
     action: Mapped[str] = mapped_column(String(40))
     details: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class FortniteAccount(Base):
+    __tablename__ = "fortnite_accounts"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(32), index=True)
+    display_name: Mapped[str] = mapped_column(String(64))
+    total_minutes: Mapped[int | None]
+    playtime_source: Mapped[str | None] = mapped_column(String(24))
+    favorite_mode: Mapped[str | None] = mapped_column(String(64))
+    recent_checked_at: Mapped[datetime | None]
+    checked_at: Mapped[datetime] = mapped_column(DateTime)
+    modes: Mapped[list["FortniteModeStats"]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin", order_by="FortniteModeStats.mode"
+    )
+
+
+class FortniteModeStats(Base):
+    __tablename__ = "fortnite_mode_stats"
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("fortnite_accounts.user_id", ondelete="CASCADE"), primary_key=True
+    )
+    mode: Mapped[str] = mapped_column(String(64), primary_key=True)
+    lifetime_minutes: Mapped[int | None]
+    recent_minutes: Mapped[int | None]
+    recent_matches: Mapped[int | None]
+    rank_name: Mapped[str | None] = mapped_column(String(64))
+    rank_track_id: Mapped[str | None] = mapped_column(String(64))
+    rank_source: Mapped[str | None] = mapped_column(String(24))
+    rank_checked_at: Mapped[datetime | None]
