@@ -12,12 +12,13 @@ from .routers.fallback import build_fallback_router
 from .routers.fortnite import build_fortnite_router
 from .routers.moderation import build_moderation_router
 from .routers.profiles import build_profile_router
+from .routers.riot import build_riot_router
 from .routers.steam import build_steam_router
 from .storage import DatabaseStorage
 from .ui import menu
 
 
-def build_bot(services, settings, fetch_steam_profile, fetch_fortnite_profile=None):
+def build_bot(services, settings, fetch_steam_profile, fetch_fortnite_profile=None, fetch_riot_profile=None):
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher(storage=DatabaseStorage(services.db), events_isolation=SimpleEventIsolation())
     cards = ProfileCards(services.profiles)
@@ -38,6 +39,8 @@ def build_bot(services, settings, fetch_steam_profile, fetch_fortnite_profile=No
         private.include_router(
             build_fortnite_router(services.profiles, services.fortnite, fetch_fortnite_profile)
         )
+    if fetch_riot_profile is not None:
+        private.include_router(build_riot_router(services.profiles, services.riot, fetch_riot_profile))
     private.include_router(build_fallback_router())
     dispatcher.include_router(private)
     return bot, dispatcher

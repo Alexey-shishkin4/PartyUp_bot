@@ -173,3 +173,17 @@ class FortniteModeStats(Base):
     rank_track_id: Mapped[str | None] = mapped_column(String(64))
     rank_source: Mapped[str | None] = mapped_column(String(24))
     rank_checked_at: Mapped[datetime | None]
+
+
+class RiotProfile(Base):
+    __tablename__ = "riot_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    game: Mapped[str] = mapped_column(String(16), primary_key=True)
+    region: Mapped[str] = mapped_column(String(8))
+    game_name: Mapped[str] = mapped_column(String(16))
+    tag_line: Mapped[str] = mapped_column(String(5))
+    rank: Mapped[str | None] = mapped_column(String(48))
+    match_count: Mapped[int | None]
+    match_scope: Mapped[str] = mapped_column(String(24))
+    source: Mapped[str] = mapped_column(String(16))
+    checked_at: Mapped[datetime] = mapped_column(DateTime)
