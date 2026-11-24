@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101513">
+  <title>PartyUp · Подбор игроков</title>
+  <link rel="icon" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/miniapp/style.css">
+  <script defer src="/static/miniapp/app.js"></script>
+</head>
+<body>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="pad" viewBox="0 0 24 24"><path d="M7 6h10c2 0 3 2 4 6l.7 3.5c.7 3.5-2 4.5-4 2.5l-2.4-2.5H8.7L6.3 18c-2 2-4.7 1-4-2.5L3 12c1-4 2-6 4-6Z"/><path d="M6 10.5h5m-2.5-2.5v5m7.5-2.5h.1m2 2h.1"/></symbol>
+    <symbol id="deck-icon" viewBox="0 0 24 24"><rect x="7" y="6" width="13" height="15" rx="3"/><path d="M4 16V6a3 3 0 0 1 3-3h7m-4 11 3 2 4-5"/></symbol>
+    <symbol id="heart" viewBox="0 0 24 24"><path d="M20.4 4.9a5 5 0 0 0-7.1 0L12 6.2l-1.3-1.3a5 5 0 0 0-7.1 7.1L12 20.4l8.4-8.4a5 5 0 0 0 0-7.1Z"/></symbol>
+    <symbol id="person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></symbol>
+    <symbol id="skip" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="undo" viewBox="0 0 24 24"><path d="m9 4-5 5 5 5M4 9h9a7 7 0 0 1 0 14" transform="translate(0 -1)"/></symbol>
+    <symbol id="time" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></symbol>
+  </svg>
+  <header class="mast"><div class="mast-inner">
+    <span class="wordmark"><span class="logo"><svg class="icon"><use href="#pad"/></svg></span>partyup<span class="period">.</span></span>
+    <span class="demo">Демо · 18+</span>
+  </div></header>
+  <main>
+    <section id="feed">
+      <div class="heading"><h1>Найти своих<span>.</span></h1><button class="subtle" id="undo-button" disabled><svg class="icon"><use href="#undo"/></svg>Назад</button></div>
+      <div id="loading" class="panel"><p role="status">Загружаем тестовые анкеты…</p><button id="retry" hidden>Повторить</button></div>
+      <article id="player" hidden>
+        <div class="portrait">
+          <img id="photo" alt="">
+          <span class="counter" id="position"></span>
+          <div class="identity"><h2 id="name"></h2><span class="clock"><svg class="icon"><use href="#time"/></svg><span id="schedule"></span></span></div>
+        </div>
+        <div class="info">
+          <div><h3>Общие игры</h3><div id="common" class="tags"></div></div>
+          <div><h3>Основные игры</h3><div id="games" class="tags"></div></div>
+          <div><h3>О себе</h3><p id="bio"></p></div>
+          <div class="actions"><button id="pass"><svg class="icon"><use href="#skip"/></svg>Пропустить</button><button id="like" class="primary"><svg class="icon"><use href="#heart"/></svg>Нравится</button></div>
+        </div>
+      </article>
+      <div id="empty" class="panel" hidden><h2>Пока это все игроки</h2><p>«Назад» вернёт последнюю анкету. Новый просмотр сбросит тестовые лайки и взаимности.</p><button id="again">Начать заново</button></div>
+    </section>
+    <section id="matches" hidden><div class="heading"><h1>Взаимности<span>.</span></h1></div>
+      <div class="panel"><p id="match-empty">Здесь появятся игроки, которым ты тоже понравился.</p><ul id="match-list"></ul></div>
+    </section>
+    <section id="profile" hidden><div class="heading"><h1>Моя анкета<span>.</span></h1></div>
+      <form class="panel" id="editor">
+        <label>Имя или ник<input id="nickname" required maxlength="40" autocomplete="off"></label>
+        <label>О себе<textarea id="about" rows="3" maxlength="500"></textarea></label>
+        <fieldset><legend>Мои игры</legend><div id="choices" class="tags"></div></fieldset>
+        <p class="hint">Эта анкета хранится только в этом браузере.</p><button class="primary" type="submit">Сохранить анкету</button>
+      </form>
+    </section>
+    <p class="status" id="status" role="status"></p>
+  </main>
+  <nav aria-label="Разделы"><div>
+    <button data-tab="feed" aria-current="page"><svg class="icon"><use href="#deck-icon"/></svg>Подбор</button>
+    <button data-tab="matches"><svg class="icon"><use href="#heart"/></svg>Взаимности<span id="count" hidden></span></button>
+    <button data-tab="profile"><svg class="icon"><use href="#person"/></svg>Анкета</button>
+  </div></nav>
+  <dialog id="mutual" aria-labelledby="mutual-title"><div class="match-icon"><svg class="icon"><use href="#heart"/></svg></div>
+    <h2 id="mutual-title">Это взаимно!</h2><p id="match-message"></p><button class="primary" id="show-matches">К взаимностям</button><button id="continue">Продолжить подбор</button>
+  </dialog>
+</body>
+</html>

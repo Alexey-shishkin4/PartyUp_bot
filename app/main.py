@@ -14,6 +14,7 @@ from sqlalchemy import delete
 from .config import ROOT, Settings
 from .db import Database
 from .models import Block, Event, Match, Reaction, Report
+from .miniapp import router as miniapp_router
 from .recommender import AffinityModel
 from .schemas import ProfileInput, ReactionInput
 from .seed import seed_demo
@@ -71,6 +72,7 @@ def create_app(settings=None, database=None, start_bot=True):
                   docs_url="/docs" if settings.demo else None, redoc_url=None,
                   openapi_url="/openapi.json" if settings.demo else None)
     app.state.service, app.state.settings = service, settings
+    app.include_router(miniapp_router)
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
     @app.middleware("http")
@@ -78,11 +80,15 @@ def create_app(settings=None, database=None, start_bot=True):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["X-Frame-Options"] = "DENY"
+        miniapp_page = request.url.path in {"/miniapp", "/miniapp/"}
+        if not miniapp_page:
+            response.headers["X-Frame-Options"] = "DENY"
         response.headers["Cache-Control"] = "no-store"
+        scripts = "'self' https://telegram.org" if miniapp_page else "'self'"
+        frames = "https://web.telegram.org https://*.web.telegram.org" if miniapp_page else "'none'"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+            f"default-src 'self'; script-src {scripts}; style-src 'self'; img-src 'self' data:; "
+            f"connect-src 'self'; frame-ancestors {frames}; base-uri 'none'; form-action 'self'"
         )
         return response
 

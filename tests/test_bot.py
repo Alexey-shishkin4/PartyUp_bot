@@ -91,6 +91,17 @@ class Harness:
         return [call for call in self.session.calls if isinstance(call, SendPhoto)]
 
 
+async def test_miniapp_launch(service):
+    harness = Harness(service)
+    await harness.update(1, "/miniapp")
+    button = harness.sent()[-1].reply_markup.inline_keyboard[0][0]
+    assert button.web_app.url == "https://party.example/miniapp"
+    harness.settings.public_url = "http://127.0.0.1:8766"
+    await harness.update(1, "/miniapp")
+    assert harness.sent()[-1].reply_markup is None
+    assert "127.0.0.1:8766/miniapp" in harness.sent()[-1].text
+
+
 def photo_sizes(file_id="photo-original", file_size=200000):
     return [PhotoSize(file_id="photo-small", file_unique_id="small",width=320,height=240,file_size=1000),
             PhotoSize(file_id=file_id,file_unique_id="large",width=1280,height=960,file_size=file_size)]

@@ -37,6 +37,16 @@ def test_demo_endpoints_disabled_with_live_token(tmp_path):
         assert client.get("/api/demo/profile").status_code == 404
         assert client.get("/api/demo/feed").status_code == 404
         assert client.get("/docs").status_code == 404
+        miniapp = client.get("/miniapp")
+        assert miniapp.status_code == 200 and "PartyUp" in miniapp.text
+        assert "https://web.telegram.org" in miniapp.headers["content-security-policy"]
+        assert "x-frame-options" not in miniapp.headers
+        assert client.get("/").headers["x-frame-options"] == "DENY"
+        cards = client.get("/miniapp/deck").json()
+        assert cards and all(card["games"] and "telegram_id" not in card for card in cards)
+        for card in cards:
+            assert client.get(card["photo"]).headers["content-type"].startswith("image/")
+        assert client.get("/miniapp/portrait/unknown").status_code == 404
         assert "Telegram" in client.get("/").text
         assert client.get("/steam/login?ticket=forged").status_code == 400
 

@@ -15,7 +15,7 @@ from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import SimpleEventIsolation
-from aiogram.types import BotCommand, BotCommandScopeChat, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import BotCommand, BotCommandScopeChat, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message, ReplyKeyboardMarkup, WebAppInfo
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -551,6 +551,16 @@ def build_bot(service, settings, steam, public_steam=None):
             [("💜 Тестовый лайк",f"testreact:like:{target}"),("Дальше →",f"testreact:skip:{target}")],
             [("Начать сначала","test:restart")],
         ]))
+
+    @router.message(Command("miniapp"))
+    async def open_miniapp(message: Message):
+        if not settings.public_url.startswith("https://"):
+            await message.answer("Макет доступен в браузере на компьютере, где запущен бот: "
+                                 f"{escape(settings.public_url)}/miniapp")
+            return
+        button = InlineKeyboardButton(text="Открыть PartyUp", web_app=WebAppInfo(url=f"{settings.public_url}/miniapp"))
+        await message.answer("Посмотреть тестовые анкеты в Mini App.",
+                             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[button]]))
 
     @router.message(Command("privacy"))
     async def privacy(message: Message):
@@ -1386,6 +1396,7 @@ async def profile_alerts(bot, service):
 async def run_polling(bot, dispatcher, settings=None, service=None):
     commands=[
         BotCommand(command="find", description="Найти своих"),
+        BotCommand(command="miniapp", description="Открыть макет Mini App"),
         BotCommand(command="play", description="Найти компанию для игры сейчас"),
         BotCommand(command="profile", description="Моя анкета"),
         BotCommand(command="photo", description="Добавить или изменить фото анкеты"),
