@@ -1,0 +1,244 @@
+import httpx
+import pytest
+
+from app.domain.errors import DomainError
+from app.domain.riot import (
+    LEAGUE_FLEX,
+    LEAGUE_SOLO,
+    VALORANT_RANKED_ACTS,
+    VALORANT_RIOT_HISTORY,
+    RiotGame,
+    RiotId,
+    RiotStats,
+)
+from app.integrations.riot import RiotClient
+
+ACCOUNT = RiotId("Jett Main", "EUW")
+
+
+@pytest.mark.asyncio
+async def test_ugi_uses_total_across_unfiltered_history_and_does_not_call_fallback():
+    requests = []
+
+    def respond(request):
+        assert request.url.host == "api.ugilabs.com"
+        assert request.headers["Authorization"] == "Bearer ugi-key"
+        requests.append(request.url.raw_path)
+        if request.url.path.startswith("/v1/matches/"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "name": "Jett Main",
+                        "tag": "EUW",
+                        "mode": None,
+                        "total_matches": 1,
+                        "pagination": {"size": 1, "returned": 1, "total": 391},
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "status": 200,
+                "data": {
+                    "name": "Jett Main",
+                    "tag": "EUW",
+                    "current_data": {"currenttierpatched": "Gold 2", "games": 15},
+                    "by_season": [{"season_id": "act-old", "games": 61}],
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        stats = await RiotClient(http, ugi_key="ugi-key", henrik_key="backup").fetch(
+            RiotGame.VALORANT, "EU", ACCOUNT
+        )
+    assert stats == RiotStats(ACCOUNT, "Gold 2", 391, VALORANT_RIOT_HISTORY, "ugi", "eu")
+    assert requests == [b"/v1/matches/eu/Jett%20Main/EUW?size=1", b"/v1/rank/eu/Jett%20Main/EUW"]
+
+
+@pytest.mark.asyncio
+async def test_henrik_sums_distinct_acts_in_one_request_when_ugi_is_rate_limited():
+    requests = []
+
+    def respond(request):
+        path = request.url.path
+        requests.append(request.url.host)
+        if request.url.host == "api.ugilabs.com":
+            return httpx.Response(429, headers={"Retry-After": "120"})
+        assert request.url.host == "api.henrikdev.xyz"
+        assert request.headers["Authorization"] == "henrik-key"
+        assert path == "/valorant/v3/mmr/eu/pc/Jett Main/EUW"
+        return httpx.Response(
+            200,
+            json={
+                "status": 200,
+                "data": {
+                    "account": {"name": "Jett Main", "tag": "EUW"},
+                    "current": {"tier": {"name": "Gold 2"}},
+                    "seasonal": [
+                        {"season": {"id": "act-previous"}, "games": 83},
+                        {"season": {"id": "act-current"}, "games": 17},
+                        {"season": {"id": "ACT-PREVIOUS"}, "games": 82},
+                        {"season": {"id": "act-malformed"}, "games": "123"},
+                    ],
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = RiotClient(http, ugi_key="ugi-key", henrik_key="henrik-key")
+        for _ in range(2):
+            stats = await client.fetch(RiotGame.VALORANT, "eu", ACCOUNT)
+            assert stats == RiotStats(ACCOUNT, "Gold 2", 100, VALORANT_RANKED_ACTS, "henrik", "eu")
+    assert requests == ["api.ugilabs.com", "api.henrikdev.xyz", "api.henrikdev.xyz"]
+
+
+@pytest.mark.asyncio
+async def test_short_riot_history_does_not_replace_a_larger_ranked_total():
+    def respond(request):
+        response = {"name": "Jett Main", "tag": "EUW"}
+        if request.url.path.startswith("/v1/matches/"):
+            response["pagination"] = {"total": 100}
+        else:
+            response.update(
+                current_data={"currenttierpatched": "Gold 2", "games": 20},
+                by_season=[{"season_id": "current", "games": 20}, {"season_id": "past", "games": 141}],
+            )
+        return httpx.Response(200, json={"data": response})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        stats = await RiotClient(http, ugi_key="ugi-key").fetch(RiotGame.VALORANT, "eu", ACCOUNT)
+    assert stats == RiotStats(ACCOUNT, "Gold 2", 161, VALORANT_RANKED_ACTS, "ugi", "eu")
+
+
+@pytest.mark.asyncio
+async def test_ugi_count_can_be_shown_with_henrik_rank():
+    def respond(request):
+        if request.url.path.startswith("/v1/rank/"):
+            return httpx.Response(503)
+        if request.url.host == "api.ugilabs.com":
+            return httpx.Response(
+                200, json={"data": {"name": "Jett Main", "tag": "euw", "pagination": {"total": 140}}}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "account": {"name": "Jett Main", "tag": "EUW"},
+                    "current": {"tier": {"name": "Gold 2"}},
+                    "seasonal": [{"season": {"id": "past-act"}, "games": 99}],
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        stats = await RiotClient(http, ugi_key="ugi-key", henrik_key="henrik-key").fetch(
+            RiotGame.VALORANT, "eu", ACCOUNT
+        )
+    assert stats == RiotStats(
+        RiotId("Jett Main", "euw"), "Gold 2", 140, VALORANT_RIOT_HISTORY, "henrik_ugi", "eu"
+    )
+
+
+@pytest.mark.parametrize("henrik_status", [200, 503])
+@pytest.mark.asyncio
+async def test_valorant_detects_region_before_calling_stats(henrik_status):
+    requests = []
+
+    def respond(request):
+        host, path = request.url.host, request.url.path
+        requests.append(path)
+        if host == "api.henrikdev.xyz":
+            assert request.headers["Authorization"] == "henrik-key"
+            return httpx.Response(henrik_status, json={"data": {"region": "na"}})
+        if host == "europe.api.riotgames.com":
+            assert request.headers["X-Riot-Token"] == "riot-key"
+            if "/accounts/" in path:
+                return httpx.Response(
+                    200,
+                    json={"gameName": "Jett Main", "tagLine": "EUW", "puuid": "riot-puuid"},
+                )
+            return httpx.Response(200, json={"activeShard": "na"})
+        assert host == "api.ugilabs.com"
+        account = {"name": "Jett Main", "tag": "EUW"}
+        if path.startswith("/v1/matches/"):
+            return httpx.Response(200, json={"data": account | {"pagination": {"total": 100}}})
+        return httpx.Response(
+            200, json={"data": account | {"current_data": {"currenttierpatched": "Gold 2"}}}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        stats = await RiotClient(http, ugi_key="ugi-key", henrik_key="henrik-key", riot_key="riot-key").fetch(
+            RiotGame.VALORANT, None, ACCOUNT
+        )
+    expected = ["/valorant/v2/account/Jett Main/EUW"]
+    if henrik_status != 200:
+        expected.extend(
+            [
+                "/riot/account/v1/accounts/by-riot-id/Jett Main/EUW",
+                "/riot/account/v1/active-shards/by-game/val/by-puuid/riot-puuid",
+            ]
+        )
+    assert requests == expected + ["/v1/matches/na/Jett Main/EUW", "/v1/rank/na/Jett Main/EUW"]
+    assert stats == RiotStats(ACCOUNT, "Gold 2", 100, VALORANT_RIOT_HISTORY, "ugi", "na")
+
+
+@pytest.mark.parametrize(
+    ("region", "platform", "queue"),
+    [(None, "euw1", LEAGUE_SOLO), ("ph2", "sg2", LEAGUE_FLEX)],
+)
+@pytest.mark.asyncio
+async def test_league_selects_platform_and_queue(region, platform, queue):
+    requests = []
+    puuid = "riot_account-puuid"
+
+    def respond(request):
+        requests.append((request.url.host, request.url.path))
+        assert request.headers["X-Riot-Token"] == "riot-key"
+        if request.url.host == "europe.api.riotgames.com":
+            if "/accounts/" in request.url.path:
+                return httpx.Response(200, json={"puuid": puuid, "gameName": "Jett Main", "tagLine": "EUW"})
+            assert request.url.path == f"/riot/account/v1/region/by-game/lol/by-puuid/{puuid}"
+            return httpx.Response(200, json={"region": "EUW1"})
+        entries = [{"queueType": LEAGUE_FLEX, "tier": "SILVER", "rank": "III", "wins": 11, "losses": 9}]
+        if queue == LEAGUE_SOLO:
+            entries.append({"queueType": LEAGUE_SOLO, "tier": "GOLD", "rank": "II", "wins": 12, "losses": 8})
+        return httpx.Response(200, json=entries)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        stats = await RiotClient(http, riot_key="riot-key").fetch(RiotGame.LEAGUE, region, ACCOUNT)
+    expected = [("europe.api.riotgames.com", "/riot/account/v1/accounts/by-riot-id/Jett Main/EUW")]
+    if region is None:
+        expected.append(("europe.api.riotgames.com", f"/riot/account/v1/region/by-game/lol/by-puuid/{puuid}"))
+    expected.append((f"{platform}.api.riotgames.com", f"/lol/league/v4/entries/by-puuid/{puuid}"))
+    assert requests == expected
+    assert stats == RiotStats(
+        ACCOUNT, "Gold II" if queue == LEAGUE_SOLO else "Silver III", 20, queue, "riot", platform
+    )
+
+
+@pytest.mark.parametrize("summoner_status", [200, 404])
+@pytest.mark.asyncio
+async def test_empty_league_entries_verify_summoner_region(summoner_status):
+    def respond(request):
+        if request.url.host == "europe.api.riotgames.com":
+            return httpx.Response(
+                200, json={"gameName": "Jett Main", "tagLine": "EUW", "puuid": "riot-puuid"}
+            )
+        assert request.url.host == "kr.api.riotgames.com"
+        if request.url.path.startswith("/lol/league/"):
+            return httpx.Response(200, json=[])
+        assert request.url.path == "/lol/summoner/v4/summoners/by-puuid/riot-puuid"
+        return httpx.Response(summoner_status, json={"puuid": "riot-puuid"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = RiotClient(http, riot_key="riot-key")
+        if summoner_status == 404:
+            with pytest.raises(DomainError, match="не найден"):
+                await client.fetch(RiotGame.LEAGUE, "kr", ACCOUNT)
+        else:
+            assert await client.fetch(RiotGame.LEAGUE, "kr", ACCOUNT) == RiotStats(
+                ACCOUNT, None, None, LEAGUE_SOLO, "riot", "kr"
+            )
