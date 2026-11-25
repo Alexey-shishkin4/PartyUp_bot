@@ -164,7 +164,7 @@ def create_web_app(services=None, bot=None):
         own = profiles.public_profile(user)
         return {**card(own), "registered": True, "purpose": user.purpose, "purpose_label": own["purpose_label"],
                 "game_ids": own["game_ids"], "active": user.active,
-                "share_username": user.share_username, "steam_connected": own["steam_connected"], "catalog": catalog}
+                "steam_connected": own["steam_connected"], "catalog": catalog}
 
     async def me(request):
         return web.json_response(profile_payload(*viewer(request, allow_new=True)))
@@ -202,11 +202,6 @@ def create_web_app(services=None, bot=None):
             profiles.save_profile(user.telegram_id, None, username=account.username, changes=data)
         return web.json_response({"saved": True})
 
-    async def accept_contacts(request):
-        _, account = viewer(request)
-        profiles.update_telegram_account(account.id, account.username, share_username=True)
-        return web.json_response({"saved": True})
-
     async def update_photo(request):
         user, _ = viewer(request)
         if request.method == "DELETE":
@@ -237,16 +232,20 @@ def create_web_app(services=None, bot=None):
             raise web.HTTPBadRequest(text="Некорректная реакция.")
         if data["kind"] == "like":
             peer = profiles.user(data["target"])
-            if peer and not peer.is_test:
-                if not account.username:
-                    raise DomainError(USERNAME_REQUIRED)
-                if not user.share_username:
-                    raise DomainError("Подтверди обмен контактами, чтобы поставить лайк.")
+            if peer and not peer.is_test and not account.username:
+                raise DomainError(USERNAME_REQUIRED)
         result = discovery.react(user.id, data["target"], data["kind"], fresh=True)
         if result["new"]:
+            message = "💜 У тебя новая взаимность! Открой /matches."
+            try:
+                username = await current_username(bot, user)
+                if username:
+                    message = f'💜 Взаимная симпатия! Написать в Telegram: <a href="https://t.me/{username}">@{username}</a>'
+            except (TelegramAPIError, TimeoutError):
+                pass
             try:
                 peer = discovery.match_peer(user.id, result["match_id"])
-                await bot.send_message(peer.telegram_id, "💜 У тебя новая взаимность! Открой /matches.", request_timeout=5)
+                await bot.send_message(peer.telegram_id, message, request_timeout=5)
             except (DomainError, TelegramAPIError, TimeoutError):
                 pass  # The committed match is still available to both users.
         return web.json_response({"matched": result["matched"],
@@ -267,14 +266,11 @@ def create_web_app(services=None, bot=None):
         user, _ = viewer(request)
         match_id = int(request.match_info["id"])
         peer = discovery.match_peer(user.id, match_id)
-        if not peer.share_username:
-            raise DomainError("Собеседник ещё не подтвердил обмен контактами.")
         try:
             username = await current_username(bot, peer)
         except (TelegramAPIError, TimeoutError):
             raise web.HTTPServiceUnavailable(text="Telegram пока не ответил. Попробуй ещё раз.") from None
-        if not discovery.match_peer(user.id, match_id).share_username:
-            raise DomainError("Контакт недоступен.")
+        discovery.match_peer(user.id, match_id)
         return web.json_response({"username": username})
 
     async def photo(request):
@@ -321,7 +317,6 @@ def create_web_app(services=None, bot=None):
         return await avatar(request)
 
     app.add_routes([
-        web.post("/miniapp/api/contact-consent", accept_contacts),
         web.get("/miniapp/api/bootstrap", bootstrap),
         web.get("/miniapp/api/me", me), web.put("/miniapp/api/me", edit), web.post("/miniapp/api/me", edit),
         web.put("/miniapp/api/me/photo", update_photo), web.delete("/miniapp/api/me/photo", update_photo),

@@ -48,7 +48,7 @@
       <div id="empty" class="panel" hidden><img class="brand-art" src="/miniapp/art" loading="lazy" alt=""><div><h2>Пока это все игроки</h2><p>«Назад» вернёт последнюю анкету. Новый просмотр сбросит тестовые лайки и взаимности.</p><button id="again">Начать заново</button></div></div>
     </section>
     <section id="matches" hidden><div class="heading"><h1>Взаимности<span>.</span></h1></div>
-      <div class="panel"><p id="match-empty">Здесь появятся игроки, которым ты тоже понравился.</p><button id="review-contacts" hidden>Подтвердить обмен контактами</button><ul id="match-list"></ul></div>
+      <div class="panel"><p id="match-empty">Здесь появятся игроки, которым ты тоже понравился.</p><ul id="match-list"></ul></div>
     </section>
     <section id="profile" hidden><div class="heading"><h1><span id="profile-title">Моя анкета</span><span>.</span></h1></div>
       <article id="own-card" hidden>
@@ -87,12 +87,6 @@
   </div></nav>
   <dialog id="mutual" aria-labelledby="mutual-title"><div class="match-icon"><svg class="icon"><use href="#heart"/></svg></div>
     <h2 id="mutual-title">Это взаимно!</h2><p id="match-message"></p><div id="mutual-contact" aria-live="polite"></div><button class="primary" id="show-matches">К взаимностям</button><button id="continue">Продолжить подбор</button>
-  </dialog>
-  <dialog id="contact-consent" aria-labelledby="contact-title">
-    <h2 id="contact-title">Обмен контактами</h2>
-    <p>При взаимном лайке вы увидите @username друг друга. Это правило действует и для уже созданных взаимностей.</p>
-    <button class="primary" id="accept-contacts">Подтвердить</button>
-    <button id="cancel-contacts">Отмена</button>
   </dialog>
 </body>
 </html>

@@ -12,7 +12,6 @@ let ownProfile;
 let ownProfileAt = 0;
 const photos = new WeakMap();
 let viewVersion = 0;
-let onContactConsent;
 
 function node(tag, text, cls) {
   const out = document.createElement(tag);
@@ -37,7 +36,7 @@ async function api(path, method = "GET", data) {
 }
 
 function backButton() {
-  const inner = trail.length > 0 || profileMode === "edit" || el("mutual").open || el("contact-consent").open;
+  const inner = trail.length > 0 || profileMode === "edit" || el("mutual").open;
   el("go-back").textContent = inner ? "← Назад" : "← В чат";
   if (tg?.isVersionAtLeast("6.1")) {
     if (inner) tg.BackButton.show(); else tg.BackButton.hide();
@@ -46,8 +45,7 @@ function backButton() {
 
 function goBack() {
   if (busy) return;
-  if (el("contact-consent").open) el("contact-consent").close();
-  else if (el("mutual").open) el("mutual").close();
+  if (el("mutual").open) el("mutual").close();
   else if (tab === "profile" && profileMode === "edit") navigate("profile", false);
   else if (trail.length) navigate(trail.pop(), false);
   else tg?.close();
@@ -156,7 +154,6 @@ async function loadMatches(version) {
   const matches = await api("matches");
   if (version !== viewVersion) return;
   el("match-empty").hidden = matches.length > 0;
-  el("review-contacts").hidden = ownProfile.share_username || matches.length === 0;
   const pending = matches.map(match => {
     const li = node("li", "");
     const contact = node("div", "Загружаем контакт…");
@@ -254,17 +251,7 @@ async function action(task) {
   finally { busy = false; controls.forEach(button => { button.disabled = false; }); }
 }
 
-function confirmContacts(next) {
-  onContactConsent = next;
-  el("contact-consent").showModal();
-  backButton();
-}
-
 function react(kind) {
-  if (kind === "like" && current && !current.is_test && !ownProfile.share_username) {
-    confirmContacts(() => react(kind));
-    return;
-  }
   return action(async () => {
     if (!current) return;
     const { matched, match_id } = await api("react", "POST", { target: current.id, kind });
@@ -324,21 +311,6 @@ el("undo-button").hidden = true;
 el("game-search").oninput = event => {
   const query = event.target.value.trim().toLowerCase();
   for (const label of el("choices").children) label.hidden = !label.textContent.toLowerCase().includes(query);
-};
-el("review-contacts").onclick = () => confirmContacts(() => navigate("matches", false));
-el("cancel-contacts").onclick = () => el("contact-consent").close();
-el("contact-consent").addEventListener("close", backButton);
-el("accept-contacts").onclick = async event => {
-  const button = event.currentTarget;
-  button.disabled = true;
-  try {
-    await api("contact-consent", "POST");
-    ownProfile.share_username = true;
-    el("contact-consent").close();
-    onContactConsent();
-  } catch (error) {
-    el("contact-consent").querySelector("p").textContent = error.message;
-  } finally { button.disabled = false; }
 };
 tabs.forEach(button => { button.onclick = () => navigate(button.dataset.tab); });
 el("retry").onclick = start;

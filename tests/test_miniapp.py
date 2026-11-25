@@ -16,9 +16,10 @@ from app.persistence.models import Match
 from tests.telegram.harness import Harness, register
 
 
-def signed(token, user_id, age=0):
+def signed(token, user_id, age=0, *, has_username=True):
     fields = {"auth_date": str(int(time.time()) - age),
-              "user": json.dumps({"id": user_id, "first_name": "Игрок", "username": f"player{user_id}"})}
+              "user": json.dumps({"id": user_id, "first_name": "Игрок",
+                                  "username": f"player{user_id}" if has_username else None})}
     payload = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
     key = hmac.digest(b"WebAppData", token.encode(), "sha256")
     fields["hash"] = hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
@@ -83,6 +84,7 @@ async def test_cross_surface_match(web_bot, service, web_first):
     if web_first:
         assert await (await client.get(path + "matches", headers=auth)).json() == []
         await h.update(202, callback=f"react:like:{a.id}", username="current202")
+    assert any(msg.chat_id == 202 and "@current101" in msg.text for msg in h.sent())
     assert (await client.post(path + "react", json=reaction, headers=auth)).status == 409
     with service.db.session() as session:
         assert session.scalar(select(func.count()).select_from(Match)) == 1
@@ -93,14 +95,15 @@ async def test_cross_surface_match(web_bot, service, web_first):
     assert any("@current101" in (msg.caption or "") for msg in h.photos_sent())
     h.session.usernames[202] = None
     assert await (await client.get(contact, headers=auth)).json() == {"username": None}
-    service.profiles.update_telegram_account(202, "private", share_username=False)
-    assert (await client.get(contact, headers=auth)).status == 409
+    h.session.usernames[202] = "renamed202"
+    service.profiles.update_telegram_account(202, "old202", share_username=False)
+    assert await (await client.get(contact, headers=auth)).json() == {"username": "renamed202"}
     service.discovery.react(b.id, a.id, "block")
     assert (await client.get(contact, headers=auth)).status == 409
     assert await (await client.get(path + "matches", headers=auth)).json() == []
 
 
-async def test_skip_undo_consent_and_private_photo(web_bot, service, users):
+async def test_skip_undo_username_requirement_and_private_photo(web_bot, service, users):
     client, h = web_bot
     a, b = users(301), users(302)
     auth = signed(h.bot.token, 301)
@@ -108,7 +111,8 @@ async def test_skip_undo_consent_and_private_photo(web_bot, service, users):
     assert (await client.get(path + f"photo/{b.id}", headers=auth)).status == 404
     assert (await client.post(path + "react", json={"target": b.id, "kind": "skip"}, headers=auth)).status == 409
     assert (await client.get(path + "feed", headers=auth)).status == 200
-    assert (await client.post(path + "react", json={"target": b.id, "kind": "like"}, headers=auth)).status == 409
+    no_username = signed(h.bot.token, 301, has_username=False)
+    assert (await client.post(path + "react", json={"target": b.id, "kind": "like"}, headers=no_username)).status == 409
     assert (await client.post(path + "react", json={"target": b.id, "kind": "skip"}, headers=auth)).status == 200
     photo = path + f"photo/{b.id}"
     assert (await client.get(photo, headers=auth)).status == 404

@@ -53,9 +53,6 @@ async def test_mobile_and_desktop_miniapp(service, users):
             await expect(page.locator("#name")).to_contain_text(b.name)
             assert [url.split("/api/")[1] for url in requests if "/api/" in url] == ["bootstrap"]
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-            await page.locator("#like").click()
-            await expect(page.locator("#contact-consent")).to_be_visible()
-            await page.locator("#cancel-contacts").click()
             await page.locator("[data-tab=profile]").click()
             await expect(page.locator("#own-name")).to_contain_text(a.name)
             await expect(page.locator("#own-card .portrait")).to_have_attribute("aria-busy", "true")
@@ -83,7 +80,6 @@ async def test_mobile_and_desktop_miniapp(service, users):
             await page.locator("#undo-button").click()
             await expect(page.locator("#player")).to_be_visible()
             await page.locator("#like").click()
-            await page.locator("#accept-contacts").click()
             await expect(page.locator("#mutual")).to_be_visible()
             await expect(page.locator("#mutual-contact a")).to_have_text("@current502")
             await page.locator("#show-matches").click()

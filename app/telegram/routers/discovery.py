@@ -7,12 +7,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from app.domain.errors import DomainError
-from app.domain.profiles import PHOTO_UNCHANGED
 from app.services.fixture_catalog import fixture_definitions
 from app.telegram.cards import profile_text
 from app.telegram.contacts import current_username as resolve_username
 from app.telegram.states import Form
-from app.telegram.ui import CONTACT_NOTICE, USERNAME_REQUIRED, buttons, clear_buttons, menu, require_profile
+from app.telegram.ui import USERNAME_REQUIRED, buttons, clear_buttons, menu, require_profile
 
 log = logging.getLogger(__name__)
 
@@ -20,26 +19,17 @@ log = logging.getLogger(__name__)
 def build_discovery_router(profiles, discovery, cards, feed_view):
     router = Router(name="discovery")
 
-    async def peer_contact(bot, peer, *, current_username=PHOTO_UNCHANGED):
-        if not peer.share_username:
-            return "Собеседник ещё не включил обмен контактами."
+    async def peer_contact(bot, peer):
         try:
-            username = await resolve_username(bot, peer, current_username)
+            username = await resolve_username(bot, peer)
         except (TelegramAPIError, TimeoutError):
             return "Контакт пока недоступен. Попробуй обновить список совпадений позже."
-        refreshed = profiles.user(peer.id)
-        if not refreshed or not refreshed.share_username:
-            return "Собеседник ещё не включил обмен контактами."
         if not username:
             return "У собеседника пока нет @username."
         return f'Написать в Telegram: <a href="https://t.me/{username}">@{username}</a>'
 
     async def show_matches(message, user):
         rows = discovery.matches(user.id)
-        if not user.share_username:
-            await message.answer(
-                CONTACT_NOTICE, reply_markup=buttons([[("Включить обмен контактами", "match:enable")]])
-            )
         if not rows:
             await message.answer("Здесь появятся взаимные симпатии 💜", reply_markup=menu())
         for row in rows[:30]:
@@ -115,17 +105,7 @@ def build_discovery_router(profiles, discovery, cards, feed_view):
         if not user or user.banned:
             return
         _, action, *args = callback.data.split(":")
-        if action == "enable":
-            user = profiles.update_telegram_account(
-                callback.from_user.id, callback.from_user.username, share_username=True
-            )
-            await clear_buttons(callback.message)
-            if not user.username:
-                await callback.message.answer(
-                    "У тебя пока нет @username. Добавь его в Telegram и снова открой «Совпадения»."
-                )
-            await show_matches(callback.message, user)
-        elif action == "list":
+        if action in {"enable", "list"}:
             user = profiles.update_telegram_account(callback.from_user.id, callback.from_user.username)
             await show_matches(callback.message, user)
         elif action in {"block", "report"}:
@@ -277,12 +257,6 @@ def build_discovery_router(profiles, discovery, cards, feed_view):
         if kind == "like" and not peer.is_test and not user.username:
             await message.answer(USERNAME_REQUIRED)
             return
-        if kind == "like" and not peer.is_test and not user.share_username:
-            await callback.message.answer(
-                CONTACT_NOTICE + " После подтверждения нажми «Нравится» ещё раз.",
-                reply_markup=buttons([[("Включить обмен контактами", "match:enable")]]),
-            )
-            return
         try:
             result = discovery.react(user.id, peer.id, kind, fresh=True, gallery=origin == "testreact")
         except DomainError as error:
@@ -299,7 +273,7 @@ def build_discovery_router(profiles, discovery, cards, feed_view):
                 "Жалоба отправлена в очередь модерации. Анкета также заблокирована для тебя."
             )
         if result["matched"] and result["new"]:
-            mine = await peer_contact(message.bot, user, current_username=callback.from_user.username)
+            mine = await peer_contact(message.bot, user)
             theirs = await peer_contact(message.bot, peer)
             try:
                 discovery.match_peer(user.id, result["match_id"])

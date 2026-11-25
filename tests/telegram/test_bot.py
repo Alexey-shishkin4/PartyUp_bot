@@ -68,13 +68,9 @@ async def test_match_shows_current_usernames_only_after_mutual_likes(service, us
     harness = Harness(service)
     harness.session.usernames = {1: "alex_current", 2: "peer_current"}
     await harness.update(1, callback=f"react:like:{b.id}", username="alex_old")
-    assert "После подтверждения" in harness.sent()[-1].text
     assert not service.discovery.matches(a.id)
-    await harness.update(1, callback="match:enable", username="alex_old")
-    await harness.update(1, callback=f"react:like:{b.id}", username="alex_old")
     assert not any("@alex_current" in message.text for message in harness.sent())
     assert not any(message.chat_id == 2 for message in harness.sent())
-    await harness.update(2, callback="match:enable", username="peer_current")
     await harness.update(2, callback=f"react:like:{a.id}", username="peer_current")
     assert any(message.chat_id == 2 and "@alex_current" in message.text for message in harness.sent())
     assert any(message.chat_id == 1 and "@peer_current" in message.text for message in harness.sent())
