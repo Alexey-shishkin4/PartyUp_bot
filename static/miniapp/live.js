@@ -271,6 +271,7 @@ function react(kind) {
 async function start() {
   tabs.forEach(button => { button.disabled = true; });
   if (!tg?.initData) {
+    el("startup-animation").hidden = true;
     el("startup-spinner").hidden = true;
     el("loading").querySelector("p").textContent = "Открой PartyUp через /miniapp в личном чате с ботом.";
     el("preview").hidden = false;
@@ -279,6 +280,7 @@ async function start() {
   tg.ready();
   tg.expand();
   el("retry").hidden = true;
+  el("startup-animation").hidden = false;
   el("startup-spinner").hidden = false;
   el("loading").querySelector("p").textContent = "Открываем PartyUp…";
   try {
@@ -290,6 +292,7 @@ async function start() {
     el("go-back").hidden = false;
     await navigate(initial.profile.registered ? "feed" : "profile", false, initial);
   } catch (e) {
+    el("startup-animation").hidden = true;
     el("startup-spinner").hidden = true;
     el("loading").querySelector("p").textContent = e.name === "TimeoutError" ? "PartyUp долго отвечает. Попробуй ещё раз." : e.message;
     el("retry").hidden = false;

@@ -93,11 +93,12 @@ async def headers(request, handler):
     except web.HTTPException as error:
         response = web.Response(status=error.status, text=error.text)
     response.headers.update({
-        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "default-src 'self'; script-src 'self' https://telegram.org; "
         "img-src 'self' blob:; style-src 'self'; connect-src 'self'; base-uri 'none'; "
         "frame-ancestors https://web.telegram.org https://*.web.telegram.org",
     })
+    response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -121,6 +122,11 @@ def create_web_app(services=None, bot=None):
     async def brand_art(request):
         return web.FileResponse(STATIC / "partyup.webp", headers={"Content-Type": "image/webp"})
 
+    async def intro(request):
+        return web.FileResponse(STATIC / "rose.webp", headers={
+            "Content-Type": "image/webp", "Cache-Control": "public, max-age=86400",
+        })
+
     app.router.add_get("/miniapp", page)
     app.router.add_get("/miniapp/", page)
     app.router.add_get("/miniapp/demo", page)
@@ -128,6 +134,7 @@ def create_web_app(services=None, bot=None):
     app.router.add_get("/miniapp/portrait/{slug}", portrait)
     app.router.add_get("/miniapp/avatar", avatar)
     app.router.add_get("/miniapp/art", brand_art)
+    app.router.add_get("/miniapp/intro", intro)
     app.router.add_static("/static/miniapp", STATIC)
     if services is None:
         return app

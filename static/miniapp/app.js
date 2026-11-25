@@ -143,6 +143,7 @@ function react(kind) {
 
 async function start() {
   byId("retry").hidden = true;
+  byId("startup-animation").hidden = false;
   byId("startup-spinner").hidden = false;
   tabs.forEach(button => { button.disabled = true; });
   try {
@@ -155,6 +156,7 @@ async function start() {
     byId("loading").hidden = true;
     tabs.forEach(button => { button.disabled = false; });
   } catch {
+    byId("startup-animation").hidden = true;
     byId("loading").querySelector("p").textContent = "Не удалось загрузить анкеты.";
     byId("startup-spinner").hidden = true;
     byId("retry").hidden = false;

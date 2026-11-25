@@ -1,6 +1,6 @@
 import json
 import os
-from asyncio import Event
+from asyncio import Event, gather, wait_for
 
 from aiohttp.test_utils import TestServer
 from playwright.async_api import async_playwright, expect
@@ -37,6 +37,18 @@ async def test_mobile_and_desktop_miniapp(service, users):
             ])
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on("request", lambda request: requests.append(request.url))
+            intro_requested, bootstrap_requested = Event(), Event()
+            release_intro, release_bootstrap = Event(), Event()
+
+            async def hold_intro(route):
+                intro_requested.set()
+                await release_intro.wait()
+                await route.continue_()
+
+            async def hold_bootstrap(route):
+                bootstrap_requested.set()
+                await release_bootstrap.wait()
+                await route.continue_()
 
             async def slow_photo(route):
                 await finish_photo.wait()
@@ -47,10 +59,20 @@ async def test_mobile_and_desktop_miniapp(service, users):
                     await route.fulfill(path=ROOT / "static/miniapp/avatar.webp", content_type="image/webp")
 
             await page.route(f"**/miniapp/api/photo/{a.id}", slow_photo)
+            await page.route("**/miniapp/intro", hold_intro)
+            await page.route("**/miniapp/api/bootstrap", hold_bootstrap)
             await page.route("https://telegram.org/js/telegram-web-app.js",
                              lambda route: route.fulfill(body=sdk, content_type="application/javascript"))
-            await page.goto(str(server.make_url("/miniapp")))
-            await expect(page.locator("#name")).to_contain_text(b.name)
+            await page.goto(str(server.make_url("/miniapp")), wait_until="domcontentloaded")
+            try:
+                await wait_for(gather(intro_requested.wait(), bootstrap_requested.wait()), timeout=8)
+                await expect(page.locator("#startup-animation")).to_be_visible()
+                release_bootstrap.set()
+                await expect(page.locator("#name")).to_contain_text(b.name)
+                await expect(page.locator("#loading")).to_be_hidden()
+            finally:
+                release_bootstrap.set()
+                release_intro.set()
             assert [url.split("/api/")[1] for url in requests if "/api/" in url] == ["bootstrap"]
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             await page.locator("[data-tab=profile]").click()

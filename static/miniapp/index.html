@@ -28,7 +28,17 @@
   <main>
     <section id="feed">
       <div class="heading"><h1>Найти своих<span>.</span></h1><button class="subtle" id="undo-button" disabled><svg class="icon"><use href="#undo"/></svg>Назад</button></div>
-      <div id="loading" class="panel"><span class="spinner" id="startup-spinner" aria-hidden="true"></span><p role="status">Открываем PartyUp…</p><button id="retry" hidden>Повторить</button><a href="/miniapp/demo" id="preview" hidden>Открыть демо</a></div>
+      <div id="loading" class="panel">
+        <picture id="startup-animation" aria-hidden="true">
+          <source media="(prefers-reduced-motion: no-preference)" srcset="/miniapp/intro">
+          <img width="240" height="240" fetchpriority="low" alt="">
+        </picture>
+        <div class="startup-status">
+          <span class="spinner" id="startup-spinner" aria-hidden="true"></span>
+          <p role="status">Открываем PartyUp…</p>
+          <button id="retry" hidden>Повторить</button><a href="/miniapp/demo" id="preview" hidden>Открыть демо</a>
+        </div>
+      </div>
       <article id="player" hidden>
         <div class="portrait">
           <svg class="portrait-fallback" aria-hidden="true"><use href="#person"/></svg>

@@ -67,7 +67,12 @@ a { color: var(--mint); }
 .panel, dialog { background: var(--surface); border: 1px solid var(--line); padding: 26px; border-radius: 20px; }
 .panel h2, dialog h2 { margin-bottom: 12px; }
 .panel p + button { margin-top: 16px; }
-#loading, #section-loading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#loading { background: #130e1c; }
+.startup-status, #section-loading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#startup-animation { display: block; width: min(240px, 100%); margin: 0 auto 12px; }
+#startup-animation img { display: block; width: 100%; height: auto; aspect-ratio: 1; }
+#startup-animation:not([hidden]) + .startup-status { justify-content: center; }
+@media (prefers-reduced-motion: reduce) { #startup-animation { display: none; } }
 #loading button { margin-top: 0; }
 .spinner, .portrait[aria-busy="true"]::before {
   content: ""; display: block; width: 20px; height: 20px;

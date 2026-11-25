@@ -40,6 +40,10 @@ async def test_demo_and_auth(web_bot, users):
     for path, script in (("/miniapp", "live.js"), ("/miniapp/demo", "app.js")):
         page = await client.get(path)
         assert page.status == 200 and script in await page.text()
+    intro = await client.get("/miniapp/intro")
+    assert intro.content_type == "image/webp"
+    with Image.open(BytesIO(await intro.read())) as animation:
+        assert animation.is_animated and animation.n_frames > 1
     deck = await (await client.get("/miniapp/deck")).json()
     assert len(deck) == 6 and (await client.get(deck[0]["photo"])).status == 200
     for headers in ({}, signed("anotherKey", 11), signed(h.bot.token, 11, 3700), signed(h.bot.token, 11, -60)):
