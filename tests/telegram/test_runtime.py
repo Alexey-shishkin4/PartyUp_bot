@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 from aiogram import Dispatcher
-from aiogram.methods import GetMe, SetMyCommands
+from aiogram.methods import GetMe, SetChatMenuButton, SetMyCommands
 from aiogram.types import Chat, Message, Update, User
 from sqlalchemy import select
 
@@ -36,7 +36,8 @@ async def test_invalid_configuration_stops_before_connecting(monkeypatch, token,
         await run(settings)
 
 
-async def test_entrypoint_registers_commands_and_runs_telegram_polling(postgres_url, monkeypatch):
+@pytest.mark.parametrize("miniapp_url", ["", "https://party.example/miniapp"])
+async def test_entrypoint_registers_commands_and_runs_telegram_polling(postgres_url, monkeypatch, miniapp_url, unused_tcp_port):
     class Session(FakeSession):
         closed = False
 
@@ -47,7 +48,7 @@ async def test_entrypoint_registers_commands_and_runs_telegram_polling(postgres_
             if isinstance(method, GetMe):
                 self.calls.append(method)
                 return User(id=bot.id, is_bot=True, first_name="PartyUp", username="partyup_check_bot")
-            if isinstance(method, SetMyCommands):
+            if isinstance(method, (SetMyCommands, SetChatMenuButton)):
                 self.calls.append(method)
                 return True
             return await super().make_request(bot, method, timeout)
@@ -84,10 +85,17 @@ async def test_entrypoint_registers_commands_and_runs_telegram_polling(postgres_
             bot_token="123456789:local-test-token",
             postgres_password="local-test",
             enable_test_profiles=False,
+            miniapp_url=miniapp_url,
+            miniapp_port=unused_tcp_port,
         )
     )
 
     assert session.closed
+    button = next(call.menu_button for call in session.calls if isinstance(call, SetChatMenuButton))
+    if miniapp_url:
+        assert button.type == "web_app" and button.web_app.url == miniapp_url
+    else:
+        assert button.type == "commands"
     commands = next(call.commands for call in session.calls if isinstance(call, SetMyCommands))
     assert "find" in {command.command for command in commands}
     assert "test" not in {command.command for command in commands}

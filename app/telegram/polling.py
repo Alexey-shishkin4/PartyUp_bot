@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
-from aiogram.types import BotCommand, BotCommandScopeChat
+from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonCommands, MenuButtonWebApp, WebAppInfo
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +55,11 @@ async def run_polling(bot, dispatcher, settings, discovery):
     if settings.miniapp_url:
         commands.append(BotCommand(command="miniapp", description="Открыть PartyUp"))
     await bot.set_my_commands(commands)
+    menu_button = (
+        MenuButtonWebApp(text="Открыть PartyUp", web_app=WebAppInfo(url=settings.miniapp_url))
+        if settings.miniapp_url else MenuButtonCommands()
+    )
+    await bot.set_chat_menu_button(menu_button=menu_button)
     for developer_id in settings.developers:
         try:
             await bot.set_my_commands(
