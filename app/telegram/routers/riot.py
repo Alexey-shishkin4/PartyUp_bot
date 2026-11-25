@@ -35,6 +35,7 @@ SOURCE_NAMES = {
     "henrik": "HenrikDev API",
     "henrik_ugi": "HenrikDev API (ранг), ugiAPI (матчи)",
     "ugi_henrik": "ugiAPI (ранг), HenrikDev API (матчи)",
+    "iodid": "Iodid",
     "riot": "Riot Games API",
 }
 REFRESH_INTERVAL = timedelta(minutes=15)

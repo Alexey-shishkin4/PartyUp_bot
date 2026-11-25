@@ -185,6 +185,71 @@ async def test_valorant_detects_region_before_calling_stats(henrik_status):
     assert stats == RiotStats(ACCOUNT, "Gold 2", 100, VALORANT_RIOT_HISTORY, "ugi", "na")
 
 
+@pytest.mark.asyncio
+async def test_iodid_uses_exact_riot_id_and_ranked_queue_without_a_key():
+    def respond(request):
+        assert request.url.host == "api.safjnest.com"
+        assert request.url.path == "/api/lol/search"
+        assert request.url.params["q"] == "Jett Main#EUW"
+        assert "Authorization" not in request.headers and "X-Riot-Token" not in request.headers
+        return httpx.Response(
+            200,
+            json=[
+                {"summoner": {"riotId": "Jett Main#EUWOP", "region": "NA1"}},
+                {
+                    "summoner": {"riotId": "Jett Main#EUW", "region": "EUW1"},
+                    "ranks": {
+                        "RANKED_SOLO_5X5": {"tier": "EMERALD_II", "wins": 31, "losses": 24},
+                        "RANKED_FLEX_SR": {"tier": "GOLD_I", "wins": 38, "losses": 37},
+                    },
+                },
+            ],
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        stats = await RiotClient(http).fetch(RiotGame.LEAGUE, None, ACCOUNT)
+    assert stats == RiotStats(ACCOUNT, "Emerald II", 55, LEAGUE_SOLO, "iodid", "euw1")
+
+
+@pytest.mark.asyncio
+async def test_iodid_reads_profile_when_search_has_no_ranked_entries():
+    summoner = {"riotId": "Jett Main#EUW", "region": "EUW1", "puuid": "iodid-puuid"}
+
+    def respond(request):
+        assert request.url.host == "api.safjnest.com"
+        if request.url.path == "/api/lol/search":
+            assert request.url.params["shard"] == "EUW1"
+            return httpx.Response(200, json=[{"summoner": summoner, "ranks": {}}])
+        assert request.url.path == "/api/lol/EUW1/profile/iodid-puuid"
+        return httpx.Response(
+            200,
+            json={
+                "summoner": summoner,
+                "ranks": {"RANKED_FLEX_SR": {"tier": "MASTER_I", "wins": 9, "losses": 4}},
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        stats = await RiotClient(http).fetch(RiotGame.LEAGUE, "euw", ACCOUNT)
+    assert stats == RiotStats(ACCOUNT, "Master", 13, LEAGUE_FLEX, "iodid", "euw1")
+
+
+@pytest.mark.asyncio
+async def test_pending_iodid_profile_is_reported_without_requiring_a_riot_key():
+    def respond(request):
+        if request.url.path == "/api/lol/search":
+            return httpx.Response(
+                200,
+                json=[{"summoner": {"riotId": "Jett Main#EUW", "region": "EUW1", "puuid": "iodid-puuid"}}],
+            )
+        assert request.url.path == "/api/lol/EUW1/profile/iodid-puuid"
+        return httpx.Response(202, json={"code": "PENDING"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        with pytest.raises(DomainError, match="ещё загружает"):
+            await RiotClient(http).fetch(RiotGame.LEAGUE, None, ACCOUNT)
+
+
 @pytest.mark.parametrize(
     ("region", "platform", "queue"),
     [(None, "euw1", LEAGUE_SOLO), ("ph2", "sg2", LEAGUE_FLEX)],
@@ -196,6 +261,9 @@ async def test_league_selects_platform_and_queue(region, platform, queue):
 
     def respond(request):
         requests.append((request.url.host, request.url.path))
+        if request.url.host == "api.safjnest.com":
+            assert "X-Riot-Token" not in request.headers
+            return httpx.Response(503)
         assert request.headers["X-Riot-Token"] == "riot-key"
         if request.url.host == "europe.api.riotgames.com":
             if "/accounts/" in request.url.path:
@@ -209,7 +277,10 @@ async def test_league_selects_platform_and_queue(region, platform, queue):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         stats = await RiotClient(http, riot_key="riot-key").fetch(RiotGame.LEAGUE, region, ACCOUNT)
-    expected = [("europe.api.riotgames.com", "/riot/account/v1/accounts/by-riot-id/Jett Main/EUW")]
+    expected = [
+        ("api.safjnest.com", "/api/lol/search"),
+        ("europe.api.riotgames.com", "/riot/account/v1/accounts/by-riot-id/Jett Main/EUW"),
+    ]
     if region is None:
         expected.append(("europe.api.riotgames.com", f"/riot/account/v1/region/by-game/lol/by-puuid/{puuid}"))
     expected.append((f"{platform}.api.riotgames.com", f"/lol/league/v4/entries/by-puuid/{puuid}"))
@@ -223,6 +294,8 @@ async def test_league_selects_platform_and_queue(region, platform, queue):
 @pytest.mark.asyncio
 async def test_empty_league_entries_verify_summoner_region(summoner_status):
     def respond(request):
+        if request.url.host == "api.safjnest.com":
+            return httpx.Response(200, json=[])
         if request.url.host == "europe.api.riotgames.com":
             return httpx.Response(
                 200, json={"gameName": "Jett Main", "tagLine": "EUW", "puuid": "riot-puuid"}
