@@ -102,7 +102,7 @@ async def headers(request, handler):
     return response
 
 
-def create_web_app(services=None, bot=None, *, debug=None):
+def create_web_app(services=None, bot=None, *, debug=None, test_feed_telegram_id=None):
     @web.middleware
     async def local_only(request, handler):
         if request.remote != "127.0.0.1" or request.headers.get("Host") != f"127.0.0.1:{debug.miniapp_port}":
@@ -199,9 +199,16 @@ def create_web_app(services=None, bot=None, *, debug=None):
     async def me(request):
         return web.json_response(profile_payload(*viewer(request, allow_new=True)))
 
-    def first_card(user_id):
+    def test_feed(user):
+        return user.telegram_id == test_feed_telegram_id
+
+    def discover(user, **options):
+        gallery = test_feed(user)
+        return discovery.feed(user.id, test_only=gallery, allow_test_profiles=gallery, **options)
+
+    def feed_cards(user, **options):
         return [{**card(r["profile"]), "common_games": r["common_games"]}
-                for r in discovery.feed(user_id, limit=1)]
+                for r in discover(user, limit=1, **options)]
 
     def match_cards(user_id):
         return [{"id": m["id"], "profile": card(m["profile"])} for m in discovery.matches(user_id)]
@@ -210,9 +217,9 @@ def create_web_app(services=None, bot=None, *, debug=None):
         user, account = viewer(request, allow_new=True)
         return web.json_response({
             "profile": profile_payload(user, account),
-            "feed": first_card(user.id) if user else [],
+            "feed": feed_cards(user) if user else [],
             "matches": match_cards(user.id) if user else [],
-            "can_undo": discovery.can_undo_skip(user.id) if user else False,
+            "can_undo": discovery.can_undo_skip(user.id, test_only=test_feed(user)) if user else False,
         })
 
     async def edit(request):
@@ -256,8 +263,8 @@ def create_web_app(services=None, bot=None, *, debug=None):
 
     async def feed(request):
         user, _ = viewer(request)
-        return web.json_response(first_card(user.id),
-                                 headers={"X-Can-Undo": "1" if discovery.can_undo_skip(user.id) else "0"})
+        can_undo = discovery.can_undo_skip(user.id, test_only=test_feed(user))
+        return web.json_response(feed_cards(user), headers={"X-Can-Undo": "1" if can_undo else "0"})
 
     async def react(request):
         user, account = viewer(request)
@@ -268,7 +275,9 @@ def create_web_app(services=None, bot=None, *, debug=None):
             peer = profiles.user(data["target"])
             if peer and not peer.is_test and not account.username:
                 raise DomainError(USERNAME_REQUIRED)
-        result = discovery.react(user.id, data["target"], data["kind"], fresh=True)
+        gallery = test_feed(user)
+        result = discovery.react(user.id, data["target"], data["kind"], fresh=True,
+                                 gallery=gallery, allow_test_profiles=gallery)
         if result["new"]:
             message = "💜 У тебя новая взаимность! Открой /matches."
             try:
@@ -287,10 +296,9 @@ def create_web_app(services=None, bot=None, *, debug=None):
 
     async def undo(request):
         user, _ = viewer(request)
-        target = discovery.undo_skip(user.id)
-        rows = discovery.feed(user.id, preferred_id=target, limit=1) if target else []
-        restored = {**card(rows[0]["profile"]), "common_games": rows[0]["common_games"]} if rows else None
-        return web.json_response({"undone": target is not None, "card": restored})
+        target = discovery.undo_skip(user.id, test_only=test_feed(user))
+        rows = feed_cards(user, preferred_id=target) if target else []
+        return web.json_response({"undone": target is not None, "card": rows[0] if rows else None})
 
     async def matches(request):
         user, _ = viewer(request)
@@ -320,8 +328,8 @@ def create_web_app(services=None, bot=None, *, debug=None):
                     Event.actor_id == user.id, Event.target_id == target_id,
                     Event.kind.in_(("impression", "test_impression")),
                 ).limit(1))
-            return shown is not None and discovery.feed(
-                user.id, preferred_id=target_id, availability_only=True, record_impressions=False)
+            return shown is not None and discover(
+                user, preferred_id=target_id, availability_only=True, record_impressions=False)
 
         if not allowed():
             raise web.HTTPNotFound()
@@ -368,7 +376,11 @@ async def miniapp_server(settings, services, bot):
         yield
         return
     debug = settings if settings.miniapp_debug else None
-    runner = web.AppRunner(create_web_app(services, bot, debug=debug), access_log=None)
+    test_id = settings.miniapp_test_feed_telegram_id
+    runner = web.AppRunner(
+        create_web_app(services, bot, debug=debug, test_feed_telegram_id=test_id if test_id in settings.developers else None),
+        access_log=None,
+    )
     await runner.setup()
     try:
         host = "127.0.0.1" if debug else "0.0.0.0"

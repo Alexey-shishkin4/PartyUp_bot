@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/miniapp/style.css">
   <!-- SDK -->
   <script defer src="/static/miniapp/startup.js"></script>
+  <script defer src="/static/miniapp/swipe.js"></script>
   <script defer src="/static/miniapp/{{entry}}.js"></script>
 </head>
 <body data-local-debug="{{local_debug}}">
@@ -43,7 +44,9 @@
       <article id="player" hidden>
         <div class="portrait">
           <svg class="portrait-fallback" aria-hidden="true"><use href="#person"/></svg>
-          <img id="photo" alt="">
+          <img id="photo" draggable="false" alt="">
+          <span class="swipe-feedback swipe-like" aria-hidden="true">Нравится</span>
+          <span class="swipe-feedback swipe-skip" aria-hidden="true">Пропуск</span>
           <button type="button" class="retry-photo" hidden>Повторить загрузку фото</button>
           <span class="counter" id="position"></span>
           <div class="identity"><h2 id="name"></h2><span class="clock"><svg class="icon"><use href="#time"/></svg><span id="schedule"></span></span></div>
@@ -53,6 +56,7 @@
           <div><h3>Основные игры</h3><div id="games" class="tags"></div></div>
           <div><h3>О себе</h3><p id="bio"></p></div>
           <div class="actions"><button id="pass"><svg class="icon"><use href="#skip"/></svg>Пропустить</button><button id="like" class="primary"><svg class="icon"><use href="#heart"/></svg>Нравится</button></div>
+          <small class="hint swipe-hint">← Пропуск · Лайк →</small>
           <small class="hint" id="like-contact-note" hidden>При взаимном лайке вы увидите @username друг друга.</small>
         </div>
       </article>

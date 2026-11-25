@@ -11,6 +11,19 @@ from tests.telegram.harness import Harness
 from tests.test_miniapp import signed
 
 
+async def touch_swipe(page, session, distance):
+    portrait = page.locator("#player .portrait")
+    await portrait.scroll_into_view_if_needed()
+    rect = await portrait.bounding_box()
+    x, y = rect["x"] + rect["width"] / 2, rect["y"] + min(95, rect["height"] / 2)
+    await session.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": x, "y": y}]})
+    for step in range(1, 6):
+        await session.send("Input.dispatchTouchEvent", {
+            "type": "touchMove", "touchPoints": [{"x": x + distance * step / 5, "y": y}]
+        })
+    await session.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+
+
 async def test_mobile_and_desktop_miniapp(service, users):
     a, b = users(501), users(502)
     harness = Harness(service)
@@ -27,7 +40,8 @@ async def test_mobile_and_desktop_miniapp(service, users):
     async with TestServer(create_web_app(service, harness.bot)) as server, async_playwright() as p:
         browser = await p.chromium.launch(executable_path=os.environ.get("PARTYUP_TEST_CHROME") or None)
         try:
-            page = await browser.new_page(viewport={"width": 390, "height": 844})
+            page = await browser.new_page(viewport={"width": 390, "height": 844}, has_touch=True)
+            touch = await page.context.new_cdp_session(page)
             errors = []
             requests = []
             finish_photo = Event()
@@ -115,12 +129,12 @@ async def test_mobile_and_desktop_miniapp(service, users):
             await expect(page.locator("#status")).to_have_text("Анкета сохранена.")
             await expect(page.locator("#own-name")).to_contain_text("Мобильный игрок")
             await page.locator("#go-back").click()
-            await page.locator("#pass").click()
+            await touch_swipe(page, touch, -128)
             await expect(page.locator("#empty")).to_be_visible()
             await page.reload()
             await page.locator("#undo-button").click()
             await expect(page.locator("#player")).to_be_visible()
-            await page.locator("#like").click()
+            await touch_swipe(page, touch, 128)
             await expect(page.locator("#mutual")).to_be_visible()
             await expect(page.locator("#mutual-contact a")).to_have_text("@current502")
             await page.locator("#show-matches").click()

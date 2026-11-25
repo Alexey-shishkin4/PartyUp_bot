@@ -188,6 +188,11 @@ function connectTelegram() {
 tabs.forEach(button => button.addEventListener("click", () => navigate(button.dataset.tab)));
 byId("pass").onclick = () => react("pass");
 byId("like").onclick = () => react("like");
+bindProfileSwipes(byId("player"), () => Boolean(current && active === "feed"), async (kind, animation) => {
+  const card = current;
+  await animation;
+  if (current === card) react(kind === "skip" ? "pass" : kind);
+});
 byId("retry").onclick = start;
 byId("undo-button").onclick = () => {
   const last = reactions.pop();

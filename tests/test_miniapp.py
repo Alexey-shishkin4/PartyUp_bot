@@ -13,6 +13,8 @@ from sqlalchemy import func, select
 from app.miniapp import create_web_app
 from app.miniapp import miniapp_server
 from app.persistence.models import Match
+from app.services.application import Services
+from app.services.fixtures import seed_test_profiles
 from tests.telegram.harness import Harness, register
 
 
@@ -90,6 +92,30 @@ async def test_local_debug_keeps_the_api_on_loopback(service, users, unused_tcp_
             assert (await r.json())["profile"]["id"] == user.id
         await h.update(73, "/miniapp")
         assert url in h.sent()[-1].text and h.sent()[-1].reply_markup is None
+    await h.bot.session.close()
+
+
+async def test_miniapp_test_feed_is_scoped_and_supports_skip_undo(service, users):
+    users(71)
+    users(72)
+    seed_test_profiles(service)
+    normal = Services(service.db, include_test_profiles=False)
+    h = Harness(normal)
+    async with TestClient(TestServer(create_web_app(normal, h.bot, test_feed_telegram_id=71))) as client:
+        path = "/miniapp/api/"
+        tester = signed(h.bot.token, 71)
+        other = signed(h.bot.token, 72)
+        feed = await (await client.get(path + "feed", headers=tester)).json()
+        card = feed[0]
+        assert card["is_test"]
+        regular_feed = await (await client.get(path + "feed", headers=other)).json()
+        assert all(not row["is_test"] for row in regular_feed)
+        assert (await client.get(path + f"photo/{card['id']}", headers=tester)).status == 200
+        assert (await client.get(path + f"photo/{card['id']}", headers=other)).status == 404
+        assert (await client.post(path + "react", json={"target": card["id"], "kind": "skip"}, headers=tester)).status == 200
+        assert (await (await client.post(path + "undo", headers=tester)).json())["card"]["id"] == card["id"]
+        assert (await (await client.post(path + "react", json={"target": card["id"], "kind": "like"},
+                                         headers=tester)).json()) == {"matched": False}
     await h.bot.session.close()
 
 

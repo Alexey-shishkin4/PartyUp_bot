@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     miniapp_port: int = Field(default=8766, ge=1, le=65535)
     miniapp_debug: bool = False
     miniapp_debug_telegram_id: int | None = Field(default=None, gt=0, lt=2**52)
+    miniapp_test_feed_telegram_id: int | None = Field(default=None, gt=0, lt=2**52)
 
     @field_validator("miniapp_url")
     @classmethod

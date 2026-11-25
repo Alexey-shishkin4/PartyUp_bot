@@ -78,6 +78,7 @@ class DiscoveryService:
         real_only=False,
         availability_only=False,
         preferred_id=None,
+        allow_test_profiles=False,
     ):
         with self.lock, self.db.session.begin() as session:
             actor = session.get(User, actor_id)
@@ -118,13 +119,13 @@ class DiscoveryService:
                             (User.looking_for_game == focus) & (User.looking_until > utcnow()),
                         ),
                     )
-            if real_only or not self.include_test_profiles:
+            if real_only or not (self.include_test_profiles or (test_only and allow_test_profiles)):
                 query = query.where(User.is_test.is_(False))
             if preferred_id is not None:
                 query = query.where(User.id == preferred_id)
             candidates = session.scalars(query.order_by(User.last_active.desc()).limit(2000))
             if availability_only:
-                return any(compatible(actor, candidate) for candidate in candidates)
+                return any(test_only or compatible(actor, candidate) for candidate in candidates)
             ranked = [
                 dict(
                     profile=self.profiles.public_profile(candidate),
@@ -190,9 +191,9 @@ class DiscoveryService:
                 return reaction
         return None
 
-    def can_undo_skip(self, actor_id):
+    def can_undo_skip(self, actor_id, *, test_only=False):
         with self.db.session() as session:
-            return self._latest_skip(session, actor_id, False) is not None
+            return self._latest_skip(session, actor_id, test_only) is not None
 
     def undo_skip(self, actor_id, *, test_only=False):
         with self.lock, self.db.session.begin() as session:
@@ -202,7 +203,8 @@ class DiscoveryService:
                 return reaction.target_id
         return None
 
-    def react(self, actor_id: int, target_id: int, kind: str, reason="Другое", *, fresh=False, gallery=False):
+    def react(self, actor_id: int, target_id: int, kind: str, reason="Другое", *, fresh=False, gallery=False,
+              allow_test_profiles=False):
         if kind not in {"like", "skip", "block", "report"}:
             raise DomainError("Неизвестное действие")
         with self.lock, self.db.session.begin() as session:
@@ -213,7 +215,8 @@ class DiscoveryService:
                 or actor_id == target_id
                 or actor.banned
                 or actor.is_test
-                or (target.is_test and not self.include_test_profiles)
+                or (gallery and not target.is_test)
+                or (target.is_test and not (self.include_test_profiles or (gallery and allow_test_profiles)))
             ):
                 raise DomainError("Анкета недоступна")
             shown = session.scalar(

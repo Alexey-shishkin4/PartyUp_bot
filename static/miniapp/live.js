@@ -233,10 +233,12 @@ async function action(task) {
   finally { busy = false; controls.forEach(button => { button.disabled = false; }); }
 }
 
-function react(kind) {
+function react(kind, animation) {
   return action(async () => {
     if (!current) return;
-    const { matched, match_id } = await api("react", "POST", { target: current.id, kind });
+    const [{ matched, match_id }] = await Promise.all([
+      api("react", "POST", { target: current.id, kind }), animation
+    ]);
     const name = current.name;
     void renderFeed();
     if (matched) {
@@ -322,6 +324,7 @@ el("refresh-matches").onclick = () => action(async () => {
 });
 el("pass").onclick = () => react("skip");
 el("like").onclick = () => react("like");
+bindProfileSwipes(el("player"), () => Boolean(current && !busy && tab === "feed"), react);
 el("undo-button").onclick = () => action(async () => {
   const result = await api("undo", "POST");
   el("undo-button").hidden = true;
