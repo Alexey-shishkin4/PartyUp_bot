@@ -143,6 +143,7 @@ function react(kind) {
 
 async function start() {
   byId("retry").hidden = true;
+  byId("startup-spinner").hidden = false;
   tabs.forEach(button => { button.disabled = true; });
   try {
     const response = await fetch("/miniapp/deck");
@@ -155,6 +156,7 @@ async function start() {
     tabs.forEach(button => { button.disabled = false; });
   } catch {
     byId("loading").querySelector("p").textContent = "Не удалось загрузить анкеты.";
+    byId("startup-spinner").hidden = true;
     byId("retry").hidden = false;
   }
 }

@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from PIL import Image
 from sqlalchemy import func, select
 
 from app.miniapp import create_web_app
@@ -112,7 +113,7 @@ async def test_skip_undo_consent_and_private_photo(web_bot, service, users):
     assert (await client.get(path + "feed", headers=auth)).headers["X-Can-Undo"] == "1"
     restored = await (await client.post(path + "undo", headers=auth)).json()
     assert restored["undone"] and restored["card"]["id"] == b.id
-    assert (await client.get(photo, headers=auth)).content_type == "image/png"
+    assert (await client.get(photo, headers=auth)).content_type == "image/webp"
     service.discovery.react(a.id, b.id, "block")
     assert (await client.get(photo, headers=auth)).status == 404
 
@@ -143,10 +144,13 @@ async def test_configured_http_server_and_uploaded_photo(service, users, unused_
     users(801)
     peer = users(802)
     service.profiles.set_photo(peer.id, "uploaded-photo")
+    source = BytesIO()
+    Image.new("RGB", (1280, 900), "purple").save(source, "JPEG")
+    downloads = []
 
     async def download(bot, file_id, *, timeout):
-        assert file_id == "uploaded-photo"
-        return BytesIO(b"test-photo-bytes")
+        downloads.append(file_id)
+        return BytesIO(source.getvalue())
 
     monkeypatch.setattr(type(h.bot), "download", download)
     h.settings.miniapp_url = "https://party.example/miniapp"
@@ -156,8 +160,14 @@ async def test_configured_http_server_and_uploaded_photo(service, users, unused_
     async with miniapp_server(h.settings, service, h.bot), ClientSession(headers=auth) as client:
         async with client.get(url + "/feed") as response:
             assert (await response.json())[0]["has_photo"]
+        for _ in range(2):
+            async with client.get(f"{url}/photo/{peer.id}") as response:
+                assert response.content_type == "image/webp"
+                with Image.open(BytesIO(await response.read())) as image:
+                    assert image.width == 540 and image.height < 540
+                assert response.headers["Cache-Control"] == "no-store"
+        assert downloads == ["uploaded-photo"]
+        service.discovery.react(service.profiles.user_by_telegram(801).id, peer.id, "block")
         async with client.get(f"{url}/photo/{peer.id}") as response:
-            assert response.content_type == "image/jpeg"
-            assert await response.read() == b"test-photo-bytes"
-            assert response.headers["Cache-Control"] == "no-store"
+            assert response.status == 404
     await h.bot.session.close()

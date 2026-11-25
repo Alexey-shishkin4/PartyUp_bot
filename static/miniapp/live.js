@@ -5,12 +5,12 @@ const tabs = [...document.querySelectorAll("[data-tab]")];
 const tg = window.Telegram?.WebApp;
 let tab = "feed";
 let current;
-let photoURL;
 let busy = false;
 const trail = [];
 let profileMode = "card";
 let ownProfile;
-let ownPhotoURL;
+let ownProfileAt = 0;
+const photos = new WeakMap();
 let viewVersion = 0;
 
 function node(tag, text, cls) {
@@ -24,7 +24,8 @@ async function api(path, method = "GET", data) {
   const file = data instanceof Blob;
   const response = await fetch("/miniapp/api/" + path, {
     method, headers: { Authorization: "tma " + tg.initData, "Content-Type": file ? data.type : "application/json" },
-    body: file ? data : (data === undefined ? undefined : JSON.stringify(data))
+    body: file ? data : (data === undefined ? undefined : JSON.stringify(data)),
+    signal: method === "GET" ? AbortSignal.timeout?.(15000) : undefined
   });
   if (!response.ok) {
     throw new Error(response.status >= 500 ? "Сервис временно недоступен. Попробуй ещё раз."
@@ -55,17 +56,41 @@ function showTags(id, games, empty) {
     : [node("span", empty, "hint")]));
 }
 
-async function loadFeed(version, restored) {
+async function loadPhoto(img, card, version) {
+  if (photos.has(img)) {
+    URL.revokeObjectURL(photos.get(img));
+    photos.delete(img);
+  }
+  const portrait = img.closest(".portrait");
+  img.hidden = true;
+  img.removeAttribute("src");
+  portrait.setAttribute("aria-busy", String(card.has_photo));
+  let src = "/miniapp/avatar";
+  if (card.has_photo) {
+    try {
+      const image = await api("photo/" + card.id);
+      if (version !== viewVersion) return;
+      src = URL.createObjectURL(image);
+      photos.set(img, src);
+    } catch {
+      if (version !== viewVersion) return;
+    }
+  }
+  img.src = src;
+  img.hidden = false;
+  portrait.setAttribute("aria-busy", "false");
+}
+
+async function loadFeed(version, restored, initial) {
   current = undefined;
   el("player").hidden = true;
   el("empty").hidden = true;
-  const card = restored || (await api("feed"))[0];
+  const card = restored || (initial ? initial.feed : await api("feed"))[0];
   if (version !== viewVersion) return;
+  if (initial) el("undo-button").hidden = !initial.can_undo;
   current = card;
   el("empty").hidden = Boolean(card);
   if (!card) return;
-  el("photo").src = "/miniapp/avatar";
-  if (photoURL) { URL.revokeObjectURL(photoURL); photoURL = undefined; }
   el("name").textContent = card.name + ", " + card.age;
   el("bio").textContent = card.bio || "Описание пока не заполнено.";
   el("position").hidden = !card.is_test;
@@ -76,15 +101,7 @@ async function loadFeed(version, restored) {
   showTags("common", card.common_games, "Пока нет общих игр");
   showTags("games", [...card.games, ...card.additional_games], "Игры ещё не выбраны");
   el("player").hidden = false;
-  if (card.has_photo) {
-    try {
-      const image = await api("photo/" + card.id);
-      if (viewVersion === version && current === card) {
-        photoURL = URL.createObjectURL(image);
-        el("photo").src = photoURL;
-      }
-    } catch { /* Keep the default avatar if Telegram cannot deliver the image. */ }
-  }
+  void loadPhoto(el("photo"), card, version);
 }
 
 async function loadMatches(version) {
@@ -142,11 +159,12 @@ function editor(profile) {
   backButton();
 }
 
-async function showProfile(version) {
+async function showProfile(version, initialProfile) {
   el("editor").hidden = true;
   el("own-card").hidden = true;
-  const profile = await api("me");
+  const profile = initialProfile || (Date.now() - ownProfileAt < 15000 ? ownProfile : await api("me"));
   if (version !== viewVersion) return;
+  if (profile !== ownProfile) ownProfileAt = Date.now();
   ownProfile = profile;
   document.querySelector("nav").hidden = !profile.registered;
   if (!profile.registered) { editor(profile); return; }
@@ -157,18 +175,10 @@ async function showProfile(version) {
   el("own-purpose").textContent = profile.purpose_label;
   el("own-bio").textContent = profile.bio || "Описание пока не заполнено.";
   showTags("own-games", [...profile.games, ...profile.additional_games], "Игры ещё не выбраны");
-  el("own-photo").src = "/miniapp/avatar";
-  if (ownPhotoURL) { URL.revokeObjectURL(ownPhotoURL); ownPhotoURL = undefined; }
-  if (profile.has_photo) {
-    const image = await api("photo/" + profile.id);
-    if (version === viewVersion) {
-      ownPhotoURL = URL.createObjectURL(image);
-      el("own-photo").src = ownPhotoURL;
-    }
-  }
+  void loadPhoto(el("own-photo"), profile, version);
 }
 
-async function navigate(next, remember = true) {
+async function navigate(next, remember = true, initial) {
   if (remember && next !== tab) trail.push(tab);
   profileMode = "card";
   tab = next;
@@ -182,12 +192,15 @@ async function navigate(next, remember = true) {
   el("status").textContent = "";
   backButton();
   window.scrollTo(0, 0);
+  el("section-loading").hidden = Boolean(initial);
   try {
-    if (tab === "feed") await loadFeed(version);
+    if (tab === "feed") await loadFeed(version, null, initial);
     else if (tab === "matches") await loadMatches(version);
-    else await showProfile(version);
+    else await showProfile(version, initial?.profile);
   } catch (e) {
     if (version === viewVersion) el("status").textContent = e.message;
+  } finally {
+    if (version === viewVersion) el("section-loading").hidden = true;
   }
 }
 
@@ -218,20 +231,27 @@ function react(kind) {
 async function start() {
   tabs.forEach(button => { button.disabled = true; });
   if (!tg?.initData) {
+    el("startup-spinner").hidden = true;
     el("loading").querySelector("p").textContent = "Открой PartyUp через /miniapp в личном чате с ботом.";
     el("preview").hidden = false;
     return;
   }
   tg.ready();
   tg.expand();
+  el("retry").hidden = true;
+  el("startup-spinner").hidden = false;
+  el("loading").querySelector("p").textContent = "Открываем PartyUp…";
   try {
-    const profile = await api("me");
+    const initial = await api("bootstrap");
+    ownProfile = initial.profile;
+    ownProfileAt = Date.now();
     el("loading").hidden = true;
     tabs.forEach(button => { button.disabled = false; });
     el("go-back").hidden = false;
-    await navigate(profile.registered ? "feed" : "profile", false);
+    await navigate(initial.profile.registered ? "feed" : "profile", false, initial);
   } catch (e) {
-    el("loading").querySelector("p").textContent = e.message;
+    el("startup-spinner").hidden = true;
+    el("loading").querySelector("p").textContent = e.name === "TimeoutError" ? "PartyUp долго отвечает. Попробуй ещё раз." : e.message;
     el("retry").hidden = false;
   }
 }
@@ -284,6 +304,7 @@ el("editor").onsubmit = event => {
       try { await api("me/photo", "PUT", file); }
       catch (error) { message += " Фото не изменилось. " + error.message; }
     }
+    ownProfileAt = 0;
     await navigate("profile", false);
     el("status").textContent = message;
   });

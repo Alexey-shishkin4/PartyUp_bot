@@ -1,13 +1,17 @@
 """HTTP entry points for the Telegram Mini App and its separate fixture preview."""
 import json
 import time
+from asyncio import to_thread, wait_for
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from io import BytesIO
 
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BufferedInputFile
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -22,6 +26,18 @@ from .telegram.ui import MAX_PHOTO_SIZE
 
 STATIC = ROOT / "static/miniapp"
 DECK = ("mira", "nika", "mark", "asya", "artem", "sonya")
+
+
+def thumbnail(data):
+    with Image.open(BytesIO(data)) as source:
+        if source.width * source.height > 36_000_000:
+            raise ValueError("Photo dimensions exceed the thumbnail limit")
+        source.draft("RGB", (540, 540))
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        image.thumbnail((540, 540), Image.Resampling.LANCZOS)
+        result = BytesIO()
+        image.save(result, "WEBP", quality=72)
+        return result.getvalue()
 
 
 @lru_cache(maxsize=1)
@@ -100,7 +116,10 @@ def create_web_app(services=None, bot=None):
         return web.json_response(deck())
 
     async def avatar(request):
-        return web.FileResponse(RESOURCES / "default-avatar.png")
+        return web.FileResponse(STATIC / "avatar.webp", headers={"Content-Type": "image/webp"})
+
+    async def brand_art(request):
+        return web.FileResponse(STATIC / "partyup.webp", headers={"Content-Type": "image/webp"})
 
     app.router.add_get("/miniapp", page)
     app.router.add_get("/miniapp/", page)
@@ -108,11 +127,13 @@ def create_web_app(services=None, bot=None):
     app.router.add_get("/miniapp/deck", demo_deck)
     app.router.add_get("/miniapp/portrait/{slug}", portrait)
     app.router.add_get("/miniapp/avatar", avatar)
+    app.router.add_get("/miniapp/art", brand_art)
     app.router.add_static("/static/miniapp", STATIC)
     if services is None:
         return app
 
     profiles, discovery = services.profiles, services.discovery
+    photo_cache = OrderedDict()
 
     def viewer(request, *, allow_new=False):
         account = authenticate(request, bot)
@@ -136,16 +157,29 @@ def create_web_app(services=None, bot=None):
         return {key: row[key] for key in ("id", "name", "age", "bio", "timezone", "start_hour", "end_hour",
                                            "schedule_set", "games", "additional_games", "is_test", "has_photo")}
 
-    async def me(request):
-        user, account = viewer(request, allow_new=True)
+    def profile_payload(user, account):
         catalog = [{"id": g.app_id, "name": g.name} for g in profiles.catalog()]
         if user is None:
-            return web.json_response({"registered": False, "name": account.first_name, "catalog": catalog})
+            return {"registered": False, "name": account.first_name, "catalog": catalog}
         own = profiles.public_profile(user)
-        return web.json_response({**card(own), "registered": True, "purpose": user.purpose, "purpose_label": own["purpose_label"],
-                                  "game_ids": own["game_ids"], "active": user.active,
-                                  "share_username": user.share_username, "steam_connected": own["steam_connected"],
-                                  "catalog": catalog})
+        return {**card(own), "registered": True, "purpose": user.purpose, "purpose_label": own["purpose_label"],
+                "game_ids": own["game_ids"], "active": user.active,
+                "share_username": user.share_username, "steam_connected": own["steam_connected"], "catalog": catalog}
+
+    async def me(request):
+        return web.json_response(profile_payload(*viewer(request, allow_new=True)))
+
+    def first_card(user_id):
+        return [{**card(r["profile"]), "common_games": r["common_games"]}
+                for r in discovery.feed(user_id, limit=1)]
+
+    async def bootstrap(request):
+        user, account = viewer(request, allow_new=True)
+        return web.json_response({
+            "profile": profile_payload(user, account),
+            "feed": first_card(user.id) if user else [],
+            "can_undo": discovery.can_undo_skip(user.id) if user else False,
+        })
 
     async def edit(request):
         creating = request.method == "POST"
@@ -187,8 +221,7 @@ def create_web_app(services=None, bot=None):
 
     async def feed(request):
         user, _ = viewer(request)
-        rows = discovery.feed(user.id, limit=1)
-        return web.json_response([{**card(r["profile"]), "common_games": r["common_games"]} for r in rows],
+        return web.json_response(first_card(user.id),
                                  headers={"X-Can-Undo": "1" if discovery.can_undo_skip(user.id) else "0"})
 
     async def react(request):
@@ -255,15 +288,26 @@ def create_web_app(services=None, bot=None):
             return web.FileResponse(fixture)
         file_id = profiles.photo_file(target_id)
         if file_id:
+            if file_id in photo_cache:
+                photo_cache.move_to_end(file_id)
+                return web.Response(body=photo_cache[file_id], content_type="image/webp")
             try:
-                result = await bot.download(file_id, timeout=8)
-                if result is not None and allowed() and profiles.photo_file(target_id) == file_id:
-                    return web.Response(body=result.read(), content_type="image/jpeg")
-            except (TelegramAPIError, TimeoutError):
+                result = await wait_for(bot.download(file_id, timeout=8), timeout=8)
+                if result is not None:
+                    image = await to_thread(thumbnail, result.read())
+                    if allowed() and profiles.photo_file(target_id) == file_id:
+                        if len(image) <= 256 * 1024:
+                            photo_cache[file_id] = image
+                            photo_cache.move_to_end(file_id)
+                            if len(photo_cache) > 32:
+                                photo_cache.popitem(last=False)
+                        return web.Response(body=image, content_type="image/webp")
+            except (TelegramAPIError, TimeoutError, UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
                 pass
         return await avatar(request)
 
     app.add_routes([
+        web.get("/miniapp/api/bootstrap", bootstrap),
         web.get("/miniapp/api/me", me), web.put("/miniapp/api/me", edit), web.post("/miniapp/api/me", edit),
         web.put("/miniapp/api/me/photo", update_photo), web.delete("/miniapp/api/me/photo", update_photo),
         web.get("/miniapp/api/feed", feed), web.post("/miniapp/api/react", react),

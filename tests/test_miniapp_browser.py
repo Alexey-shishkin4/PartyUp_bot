@@ -1,5 +1,6 @@
 import json
 import os
+from asyncio import Event
 
 from aiohttp.test_utils import TestServer
 from playwright.async_api import async_playwright, expect
@@ -12,6 +13,7 @@ from tests.test_miniapp import signed
 async def test_mobile_and_desktop_miniapp(service, users):
     a, b = users(501), users(502)
     harness = Harness(service)
+    service.profiles.set_photo(a.id, "own-photo")
     harness.session.usernames = {501: "current501", 502: "current502"}
     service.profiles.update_telegram_account(502, "old502", share_username=True)
     await harness.update(502, "/find")
@@ -26,16 +28,30 @@ async def test_mobile_and_desktop_miniapp(service, users):
         try:
             page = await browser.new_page(viewport={"width": 390, "height": 844})
             errors = []
+            requests = []
+            finish_photo = Event()
             page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("request", lambda request: requests.append(request.url))
+
+            async def slow_photo(route):
+                await finish_photo.wait()
+                await route.fulfill(status=503, body="Unavailable")
+
+            await page.route(f"**/miniapp/api/photo/{a.id}", slow_photo)
             await page.route("https://telegram.org/js/telegram-web-app.js",
                              lambda route: route.fulfill(body=sdk, content_type="application/javascript"))
             await page.goto(str(server.make_url("/miniapp")))
             await expect(page.locator("#name")).to_contain_text(b.name)
+            assert [url.split("/api/")[1] for url in requests if "/api/" in url] == ["bootstrap"]
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             await page.locator("#like").click()
             await expect(page.locator("#status")).to_contain_text("обмен")
             await page.locator("[data-tab=profile]").click()
             await expect(page.locator("#own-name")).to_contain_text(a.name)
+            await expect(page.locator("#own-card .portrait")).to_have_attribute("aria-busy", "true")
+            await expect(page.locator("#edit-profile")).to_be_enabled()
+            finish_photo.set()
+            await expect(page.locator("#own-photo")).to_have_attribute("src", "/miniapp/avatar")
             await page.locator("#edit-profile").click()
             await page.locator("#nickname").fill("Мобильный игрок")
             await page.locator("#share").check()

@@ -28,7 +28,7 @@
   <main>
     <section id="feed">
       <div class="heading"><h1>Найти своих<span>.</span></h1><button class="subtle" id="undo-button" disabled><svg class="icon"><use href="#undo"/></svg>Назад</button></div>
-      <div id="loading" class="panel"><p role="status">Загружаем анкеты…</p><button id="retry" hidden>Повторить</button><a href="/miniapp/demo" id="preview" hidden>Открыть демо</a></div>
+      <div id="loading" class="panel"><span class="spinner" id="startup-spinner" aria-hidden="true"></span><p role="status">Открываем PartyUp…</p><button id="retry" hidden>Повторить</button><a href="/miniapp/demo" id="preview" hidden>Открыть демо</a></div>
       <article id="player" hidden>
         <div class="portrait">
           <img id="photo" alt="">
@@ -42,7 +42,7 @@
           <div class="actions"><button id="pass"><svg class="icon"><use href="#skip"/></svg>Пропустить</button><button id="like" class="primary"><svg class="icon"><use href="#heart"/></svg>Нравится</button></div>
         </div>
       </article>
-      <div id="empty" class="panel" hidden><img class="brand-art" src="/static/miniapp/partyup.png" alt=""><div><h2>Пока это все игроки</h2><p>«Назад» вернёт последнюю анкету. Новый просмотр сбросит тестовые лайки и взаимности.</p><button id="again">Начать заново</button></div></div>
+      <div id="empty" class="panel" hidden><img class="brand-art" src="/miniapp/art" loading="lazy" alt=""><div><h2>Пока это все игроки</h2><p>«Назад» вернёт последнюю анкету. Новый просмотр сбросит тестовые лайки и взаимности.</p><button id="again">Начать заново</button></div></div>
     </section>
     <section id="matches" hidden><div class="heading"><h1>Взаимности<span>.</span></h1></div>
       <div class="panel"><p id="match-empty">Здесь появятся игроки, которым ты тоже понравился.</p><ul id="match-list"></ul></div>
@@ -70,6 +70,7 @@
         <p class="hint">Эта анкета хранится только в этом браузере.</p><button id="save-profile" class="primary" type="submit">Сохранить анкету</button>
       </form>
     </section>
+    <div class="panel" id="section-loading" hidden role="status"><span class="spinner" aria-hidden="true"></span><span>Загружаем…</span></div>
     <p class="status" id="status" role="status"></p>
   </main>
   <nav aria-label="Разделы"><div>
