@@ -200,3 +200,5 @@ class FaceitProfile(Base):
     wins: Mapped[int | None]
     win_rate: Mapped[float | None]
     checked_at: Mapped[datetime] = mapped_column(DateTime)
+    steam_id: Mapped[str | None] = mapped_column(String(20))
+    source: Mapped[str] = mapped_column(String(16), server_default="faceit")

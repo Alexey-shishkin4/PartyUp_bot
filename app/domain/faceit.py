@@ -15,6 +15,7 @@ PROFILE_PATH = re.compile(r"/(?:[a-z]{2}/)?players/([^/]+)/?", re.IGNORECASE)
 class FaceitLookup:
     kind: Literal["nickname", "steam_id", "player_id"]
     value: str
+    steam_id: str | None = None
 
     @classmethod
     def parse(cls, value: str) -> "FaceitLookup":
@@ -45,3 +46,5 @@ class FaceitStats:
     match_count: int | None
     wins: int | None
     win_rate: float | None
+    steam_id: str | None = None
+    source: Literal["faceit", "wok"] = "faceit"

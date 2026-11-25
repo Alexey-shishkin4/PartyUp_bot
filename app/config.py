@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     henrikdev_api_key: SecretStr = SecretStr("")
     riot_api_key: SecretStr = SecretStr("")
     faceit_api_key: SecretStr = SecretStr("")
+    wok_api_key: SecretStr = SecretStr("")
     admin_ids: str = ""
     developer_ids: str = ""
     enable_test_profiles: bool = False

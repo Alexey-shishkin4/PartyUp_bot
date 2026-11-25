@@ -55,7 +55,10 @@ async def run(settings: Settings):
                 henrik_key=settings.henrikdev_api_key.get_secret_value(),
                 riot_key=settings.riot_api_key.get_secret_value(),
             )
-            faceit = FaceitClient(client, settings.faceit_api_key.get_secret_value())
+            faceit = FaceitClient(
+                client, settings.faceit_api_key.get_secret_value(),
+                wok_api_key=settings.wok_api_key.get_secret_value(),
+            )
             bot, dispatcher = build_bot(
                 services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch,
                 fetch_faceit_profile=faceit.fetch,

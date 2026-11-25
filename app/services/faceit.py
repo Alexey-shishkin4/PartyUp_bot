@@ -27,6 +27,8 @@ class FaceitProfiles:
             if profile is None:
                 profile = FaceitProfile(user_id=user_id)
                 session.add(profile)
+            if stats.player_id != profile.player_id or stats.steam_id is not None:
+                profile.steam_id = stats.steam_id
             profile.player_id = stats.player_id
             profile.nickname = stats.nickname
             profile.skill_level = stats.skill_level
@@ -34,6 +36,7 @@ class FaceitProfiles:
             profile.match_count = stats.match_count
             profile.wins = stats.wins
             profile.win_rate = stats.win_rate
+            profile.source = stats.source
             profile.checked_at = utcnow()
             return profile
 

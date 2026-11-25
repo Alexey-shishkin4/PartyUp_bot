@@ -27,7 +27,8 @@ def profile_text(profile):
     ]
     text = [f"<b>CS2 · FACEIT · {escape(profile.nickname)}</b>"]
     text.extend(f"{label}: {value if value is not None else 'нет данных'}" for label, value in values)
-    text.append(f"Источник: FACEIT Data API · {profile.checked_at:%d.%m.%Y %H:%M} UTC")
+    source = "WOK Steam API" if profile.source == "wok" else "FACEIT Data API"
+    text.append(f"Источник: {source} · {profile.checked_at:%d.%m.%Y %H:%M} UTC")
     return "\n".join(text)
 
 
@@ -47,11 +48,12 @@ def build_faceit_router(profiles, faceit, fetch_faceit_profile):
         await state.set_state(FaceitForm.account)
         await message.answer(
             "Отправь никнейм FACEIT, ссылку на профиль FACEIT или SteamID64. "
-            "Бот передаст идентификатор в FACEIT и сохранит публичную статистику CS2 для твоего чата.",
+            "Для поиска через резервный WOK нужен SteamID64. "
+            "Бот передаст идентификатор источнику и сохранит статистику CS2 для твоего чата.",
             reply_markup=buttons([[("Найти по подключённому Steam", "faceit:steam")]]) if user.steam_id else None,
         )
 
-    async def load(message, state, user, lookup, existing):
+    async def load(message, state, user, lookup, existing, *, offer_manual=False):
         now = time()
         if now - (await state.get_data()).get("faceit_attempt_at", 0) < 15:
             await message.answer("Подожди 15 секунд между запросами к FACEIT.")
@@ -63,7 +65,8 @@ def build_faceit_router(profiles, faceit, fetch_faceit_profile):
                 user.id, stats, expected_checked_at=existing.checked_at if existing else None
             )
         except DomainError as error:
-            await message.answer(escape(str(error)))
+            manual = buttons([[("Указать профиль вручную", "faceit:link")]]) if offer_manual else None
+            await message.answer(escape(str(error)), reply_markup=manual)
             return
         await state.set_state(None)
         await show(message, profile)
@@ -95,6 +98,8 @@ def build_faceit_router(profiles, faceit, fetch_faceit_profile):
             await link(message, state, user, command.args, existing)
         elif existing:
             await show(message, existing)
+        elif user.steam_id:
+            await load(message, state, user, FaceitLookup("steam_id", user.steam_id), None, offer_manual=True)
         else:
             await ask_account(message, state, user)
 
@@ -125,6 +130,7 @@ def build_faceit_router(profiles, faceit, fetch_faceit_profile):
             await message.answer("Статистика FACEIT обновляется раз в 15 минут.")
             await show(message, existing)
         else:
-            await load(message, state, user, FaceitLookup("player_id", existing.player_id), existing)
+            lookup = FaceitLookup("player_id", existing.player_id, steam_id=existing.steam_id or user.steam_id)
+            await load(message, state, user, lookup, existing)
 
     return router
