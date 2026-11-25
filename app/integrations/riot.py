@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from time import monotonic
 from urllib.parse import quote, urlencode
 
@@ -15,11 +16,13 @@ from app.domain.riot import (
     RiotStats,
     normalize_region,
 )
+from app.integrations.opgg import ranked_profile as opgg_ranked_profile
 
 UGI_URL = "https://api.ugilabs.com"
 HENRIK_URL = "https://api.henrikdev.xyz"
 IODID_URL = "https://api.safjnest.com/api/lol"
 RIOT_ACCOUNT_URL = "https://europe.api.riotgames.com/riot/account/v1"
+OPGG_MAX_AGE = timedelta(days=1)
 
 
 class RiotAPIError(Exception):
@@ -138,32 +141,63 @@ class RiotClient:
         return await self.league_stats(region, riot_id, segments)
 
     async def league_stats(self, region: str | None, riot_id: RiotId, segments: str) -> RiotStats:
-        try:
-            return await self.iodid(region, riot_id)
-        except RiotAPIError as error:
-            errors = [error]
+        errors = []
+        iodid_profile = None
+        platform = region
+        if platform is None:
+            try:
+                iodid_profile = await self.iodid_search(None, riot_id)
+                _, platform, _, _ = iodid_profile
+            except RiotAPIError as error:
+                errors.append(error)
+
+        cached = None
+        if platform is not None:
+            try:
+                stats = await self.opgg(platform, riot_id)
+                if stats.source == "opgg":
+                    return stats
+                cached = stats
+            except RiotAPIError as error:
+                errors.append(error)
         if self.riot_key:
             try:
                 return await self.league(region, segments)
             except RiotAPIError as error:
                 errors.append(error)
-        if errors[0].status == 202:
+        if cached is not None and cached.rank is not None:
+            return cached
+
+        try:
+            if region is not None and iodid_profile is None:
+                iodid_profile = await self.iodid_search(region, riot_id)
+            if iodid_profile is not None:
+                return await self.iodid_stats(iodid_profile)
+        except RiotAPIError as error:
+            errors.append(error)
+        if cached is not None:
+            return cached
+        statuses = {error.status for error in errors}
+        if 202 in statuses:
             raise DomainError("Iodid ещё загружает статистику League of Legends. Попробуй позже.")
-        if errors[0].status == 409:
+        if 409 in statuses:
             raise DomainError("Iodid вернул несколько профилей с этим Riot ID. Проверь имя и тег.")
         raise self.provider_error("League of Legends", errors)
+
+    def response_error(self, provider: str, response: httpx.Response) -> RiotAPIError:
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After", "")
+            delay = max(1, int(retry_after)) if retry_after.isascii() and retry_after.isdecimal() else 60
+            self.cooldowns[provider] = monotonic() + delay
+        return RiotAPIError(response.status_code)
 
     async def get(self, provider: str, url: str, headers: dict[str, str]):
         if monotonic() < self.cooldowns.get(provider, 0):
             raise RiotAPIError(429)
         try:
             response = await self.http.get(url, headers=headers, follow_redirects=False, timeout=8)
-            if response.status_code == 429:
-                retry_after = response.headers.get("Retry-After", "")
-                delay = max(1, int(retry_after)) if retry_after.isascii() and retry_after.isdecimal() else 60
-                self.cooldowns[provider] = monotonic() + delay
             if not response.is_success or response.status_code == 202:
-                raise RiotAPIError(response.status_code)
+                raise self.response_error(provider, response)
             return response.json()
         except (httpx.RequestError, ValueError):
             raise RiotAPIError() from None
@@ -301,7 +335,25 @@ class RiotClient:
         matches = ranked_games_by_act(data.get("seasonal"))
         return RiotStats(account, rank, matches, VALORANT_RANKED_ACTS, "henrik", region)
 
-    async def iodid(self, region: str | None, riot_id: RiotId) -> RiotStats:
+    async def opgg(self, region: str, riot_id: RiotId) -> RiotStats:
+        if monotonic() < self.cooldowns.get("opgg", 0):
+            raise RiotAPIError(429)
+        try:
+            ranked, profile_updated = await opgg_ranked_profile(self.http, region, riot_id)
+        except httpx.HTTPStatusError as error:
+            raise self.response_error("opgg", error.response) from None
+        except (httpx.RequestError, ValueError):
+            raise RiotAPIError() from None
+        queue = next((item for item in (LEAGUE_SOLO, LEAGUE_FLEX) if item in ranked), LEAGUE_SOLO)
+        entry = ranked.get(queue)
+        updated = (entry["updated_at"] if entry else None) or profile_updated
+        now = datetime.now(timezone.utc)
+        source = "opgg" if updated is not None and now - OPGG_MAX_AGE <= updated <= now else "opgg_cached"
+        if entry is None:
+            return RiotStats(riot_id, None, None, queue, source, region)
+        return league_rank_stats(riot_id, region, queue, entry, entry["tier"], entry["division"], source)
+
+    async def iodid_search(self, region: str | None, riot_id: RiotId) -> tuple[RiotId, str, dict, dict | None]:
         requested_id = f"{riot_id.name}#{riot_id.tag}"
         params = {"q": requested_id}
         if region is not None:
@@ -322,7 +374,10 @@ class RiotClient:
             raise RiotAPIError(404)
         if len(profiles) > 1:
             raise RiotAPIError(409)
-        account, platform, summoner, ranks = profiles[0]
+        return profiles[0]
+
+    async def iodid_stats(self, match: tuple[RiotId, str, dict, dict | None]) -> RiotStats:
+        account, platform, summoner, ranks = match
         try:
             stats = iodid_rank_stats(account, platform, ranks)
         except RiotAPIError:
@@ -337,7 +392,7 @@ class RiotClient:
             read_puuid(identity) != puuid
             or read_region(RiotGame.LEAGUE, identity.get("region")) != platform
             or not isinstance(identity.get("riotId"), str)
-            or identity["riotId"].casefold() != requested_id.casefold()
+            or identity["riotId"].casefold() != f"{account.name}#{account.tag}".casefold()
         ):
             raise RiotAPIError()
         stats = iodid_rank_stats(account, platform, profile.get("ranks"))
