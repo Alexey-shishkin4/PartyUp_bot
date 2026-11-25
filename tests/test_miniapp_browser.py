@@ -24,6 +24,41 @@ async def touch_swipe(page, session, distance):
     await session.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
 
 
+async def test_next_card_photo_is_prefetched_before_reaction(service, users):
+    users(701)
+    first = users(702)
+    following = users(703)
+    service.profiles.set_photo(following.id, "prefetched-photo")
+    harness = Harness(service)
+    auth = signed(harness.bot.token, 701)["Authorization"].removeprefix("tma ")
+    sdk = "window.Telegram = {WebApp: {initData: " + json.dumps(auth) + """,
+      ready() {}, expand() {}, isVersionAtLeast() {return false;}
+    }};"""
+    async with TestServer(create_web_app(service, harness.bot)) as server, async_playwright() as p:
+        browser = await p.chromium.launch(executable_path=os.environ.get("PARTYUP_TEST_CHROME") or None)
+        try:
+            page = await browser.new_page()
+            requests = []
+            page.on("request", lambda request: requests.append(request.url))
+            await page.route("https://telegram.org/js/telegram-web-app.js",
+                             lambda route: route.fulfill(body=sdk, content_type="application/javascript"))
+            photo = f"/miniapp/api/photo/{following.id}"
+            await page.route("**" + photo + "*", lambda route: route.fulfill(
+                path=ROOT / "static/miniapp/avatar.webp", content_type="image/webp"))
+            async with page.expect_response("**" + photo + "?prefetch=1") as warmed:
+                await page.goto(str(server.make_url("/miniapp")))
+            await (await warmed.value).finished()
+            await expect(page.locator("#name")).to_contain_text(first.name)
+            await page.locator("#pass").click()
+            await expect(page.locator("#name")).to_contain_text(following.name)
+            await expect(page.locator("#photo")).to_be_visible()
+            assert sum(photo in url for url in requests) == 1
+            assert not any(url.endswith("/miniapp/api/feed") for url in requests)
+        finally:
+            await browser.close()
+            await harness.bot.session.close()
+
+
 async def test_mobile_and_desktop_miniapp(service, users):
     a, b = users(501), users(502)
     harness = Harness(service)

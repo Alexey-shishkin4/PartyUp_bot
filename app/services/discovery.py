@@ -79,6 +79,7 @@ class DiscoveryService:
         availability_only=False,
         preferred_id=None,
         allow_test_profiles=False,
+        impression_limit=None,
     ):
         with self.lock, self.db.session.begin() as session:
             actor = session.get(User, actor_id)
@@ -143,8 +144,9 @@ class DiscoveryService:
                     row["profile"]["id"],
                 )
             )
-            for position, row in enumerate(ranked[:limit]):
-                if record_impressions:
+            if record_impressions:
+                shown = limit if impression_limit is None else min(impression_limit, limit)
+                for position, row in enumerate(ranked[:shown]):
                     session.add(
                         Event(
                             actor_id=actor_id,

@@ -13,6 +13,7 @@ let ownProfile;
 const photos = new WeakMap();
 const contacts = new Map();
 let defaultAvatar;
+let upcoming;
 let matchRender = 0;
 
 function node(tag, text, cls) {
@@ -60,7 +61,14 @@ function showTags(id, games, empty) {
     : [node("span", empty, "hint")]));
 }
 
-async function loadPhoto(img, card) {
+function photoData(card, prefetch = false) {
+  if (card.has_photo) return api("photo/" + card.id + (prefetch ? "?prefetch=1" : ""));
+  defaultAvatar ??= fetch("/miniapp/avatar", {signal: AbortSignal.timeout?.(8000)})
+    .then(response => response.ok ? response.blob() : null).catch(() => null);
+  return defaultAvatar;
+}
+
+async function loadPhoto(img, card, prefetched) {
   const previous = photos.get(img);
   if (previous?.url) URL.revokeObjectURL(previous.url);
   const loading = {};
@@ -74,11 +82,7 @@ async function loadPhoto(img, card) {
   portrait.setAttribute("aria-busy", String(card.has_photo));
   let photoFailed = false;
   try {
-    if (!card.has_photo) {
-      defaultAvatar ??= fetch("/miniapp/avatar", {signal: AbortSignal.timeout?.(8000)})
-        .then(response => response.ok ? response.blob() : null).catch(() => null);
-    }
-    const image = card.has_photo ? await api("photo/" + card.id) : await defaultAvatar;
+    const image = (await prefetched) || await photoData(card);
     if (photos.get(img) !== loading) return;
     if (image) {
       loading.url = URL.createObjectURL(image);
@@ -99,7 +103,7 @@ async function loadPhoto(img, card) {
   portrait.setAttribute("aria-busy", "false");
 }
 
-function renderFeed(card) {
+function renderFeed(card, prefetched) {
   current = card;
   el("player").hidden = !card;
   el("empty").hidden = Boolean(card);
@@ -115,7 +119,19 @@ function renderFeed(card) {
   showTags("common", card.common_games, "Пока нет общих игр");
   showTags("games", [...card.games, ...card.additional_games], "Игры ещё не выбраны");
   el("player").hidden = false;
-  return loadPhoto(el("photo"), card);
+  return loadPhoto(el("photo"), card, prefetched);
+}
+
+function renderQueue([card, next]) {
+  const readyPhoto = upcoming?.id === card?.id && upcoming?.revision === card?.photo_revision
+    ? upcoming?.photo : undefined;
+  const shown = renderFeed(card, readyPhoto);
+  if (upcoming?.id !== next?.id || upcoming?.revision !== next?.photo_revision) {
+    upcoming = next
+      ? {id: next.id, revision: next.photo_revision, photo: photoData(next, true).catch(() => null)}
+      : undefined;
+  }
+  return shown;
 }
 
 async function showContact(slot, id, refresh = false) {
@@ -236,11 +252,12 @@ async function action(task) {
 function react(kind, animation) {
   return action(async () => {
     if (!current) return;
-    const [{ matched, match_id }] = await Promise.all([
+    const [{ matched, match_id, feed, can_undo }] = await Promise.all([
       api("react", "POST", { target: current.id, kind }), animation
     ]);
     const name = current.name;
-    void renderFeed();
+    el("undo-button").hidden = !can_undo;
+    void renderQueue(feed);
     if (matched) {
       void api("matches").then(renderMatches).catch(error => { el("status").textContent = error.message; });
       el("match-message").textContent = "У вас с игроком «" + name + "» взаимная симпатия.";
@@ -250,8 +267,6 @@ function react(kind, animation) {
       void showContact(slot, match_id);
       backButton();
     }
-    const [next] = await api("feed");
-    void renderFeed(next);
   });
 }
 
@@ -260,7 +275,7 @@ async function prepareTabs() {
   el("undo-button").hidden = !initial.can_undo;
   await Promise.all([
     renderProfile(initial.profile),
-    renderFeed(initial.feed[0]),
+    renderQueue(initial.feed),
     renderMatches(initial.matches)
   ]);
 }
@@ -312,7 +327,7 @@ el("game-search").oninput = event => {
 };
 tabs.forEach(button => { button.onclick = () => navigate(button.dataset.tab); });
 el("retry").onclick = start;
-el("again").onclick = () => action(async () => { const [card] = await api("feed"); await renderFeed(card); });
+el("again").onclick = () => action(async () => { await renderQueue(await api("feed")); });
 el("refresh-profile").onclick = () => action(async () => {
   await renderProfile(await api("me"));
   showProfileCard();
@@ -328,8 +343,7 @@ bindProfileSwipes(el("player"), () => Boolean(current && !busy && tab === "feed"
 el("undo-button").onclick = () => action(async () => {
   const result = await api("undo", "POST");
   el("undo-button").hidden = true;
-  const card = result.card || (await api("feed"))[0];
-  void renderFeed(card);
+  void renderQueue(result.card ? result.feed : await api("feed"));
   el("status").textContent = result.card ? "Предыдущая анкета возвращена." : "Этот пропуск больше нельзя вернуть.";
 });
 el("editor").onsubmit = event => {
@@ -352,9 +366,9 @@ el("editor").onsubmit = event => {
       try { await api("me/photo", "PUT", file); }
       catch (error) { message += " Фото не изменилось. " + error.message; }
     }
-    const [profile, [card]] = await Promise.all([api("me"), api("feed")]);
+    const [profile, feed] = await Promise.all([api("me"), api("feed")]);
     void renderProfile(profile);
-    void renderFeed(card);
+    void renderQueue(feed);
     navigate("profile", false);
     el("status").textContent = message;
   });

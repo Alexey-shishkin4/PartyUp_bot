@@ -36,7 +36,7 @@ async def run(settings: Settings):
     try:
         db.initialize()
         services = Services(db, include_test_profiles=settings.enable_test_profiles)
-        if settings.enable_test_profiles:
+        if settings.enable_test_profiles or settings.miniapp_test_feed_telegram_id in settings.developers:
             seed_test_profiles(services)
 
         async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:

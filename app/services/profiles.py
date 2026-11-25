@@ -1,3 +1,5 @@
+from hashlib import sha256
+
 from sqlalchemy import delete, select
 
 from app.domain.dota import dota_game_name
@@ -191,6 +193,7 @@ class ProfileService:
                 user.photo_file_id or user.use_default_avatar or (test_info and not user.test_photo_override)
             ),
             "use_default_avatar": user.use_default_avatar,
+            "photo_revision": sha256(user.photo_file_id.encode()).hexdigest()[:16] if user.photo_file_id else None,
             "steam_connected": bool(user.steam_id),
             "steam_import_status": user.steam_import_status,
             "steam_game_count": len(imported),

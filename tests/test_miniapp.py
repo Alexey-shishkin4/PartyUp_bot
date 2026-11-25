@@ -108,14 +108,21 @@ async def test_miniapp_test_feed_is_scoped_and_supports_skip_undo(service, users
         feed = await (await client.get(path + "feed", headers=tester)).json()
         card = feed[0]
         assert card["is_test"]
+        queued = feed[1]
+        assert (await client.get(path + f"photo/{queued['id']}", headers=tester)).status == 404
+        assert (await client.get(path + f"photo/{queued['id']}?prefetch=1", headers=tester)).status == 200
+        assert (await client.get(path + f"photo/{queued['id']}?prefetch=1", headers=other)).status == 404
+        assert (await client.post(path + "react", json={"target": queued["id"], "kind": "like"},
+                                  headers=tester)).status == 409
         regular_feed = await (await client.get(path + "feed", headers=other)).json()
         assert all(not row["is_test"] for row in regular_feed)
         assert (await client.get(path + f"photo/{card['id']}", headers=tester)).status == 200
         assert (await client.get(path + f"photo/{card['id']}", headers=other)).status == 404
         assert (await client.post(path + "react", json={"target": card["id"], "kind": "skip"}, headers=tester)).status == 200
         assert (await (await client.post(path + "undo", headers=tester)).json())["card"]["id"] == card["id"]
-        assert (await (await client.post(path + "react", json={"target": card["id"], "kind": "like"},
-                                         headers=tester)).json()) == {"matched": False}
+        result = await (await client.post(path + "react", json={"target": card["id"], "kind": "like"}, headers=tester)).json()
+        assert not result["matched"]
+        assert result["feed"][0]["id"] == feed[1]["id"]
     await h.bot.session.close()
 
 

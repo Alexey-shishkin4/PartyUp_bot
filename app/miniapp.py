@@ -185,7 +185,7 @@ def create_web_app(services=None, bot=None, *, debug=None, test_feed_telegram_id
 
     def card(row):
         return {key: row[key] for key in ("id", "name", "age", "bio", "timezone", "start_hour", "end_hour",
-                                           "schedule_set", "games", "additional_games", "is_test", "has_photo")}
+                                           "schedule_set", "games", "additional_games", "is_test", "has_photo", "photo_revision")}
 
     def profile_payload(user, account):
         catalog = [{"id": g.app_id, "name": g.name} for g in profiles.catalog()]
@@ -208,10 +208,13 @@ def create_web_app(services=None, bot=None, *, debug=None, test_feed_telegram_id
 
     def feed_cards(user, **options):
         return [{**card(r["profile"]), "common_games": r["common_games"]}
-                for r in discover(user, limit=1, **options)]
+                for r in discover(user, limit=2, impression_limit=1, **options)]
 
     def match_cards(user_id):
         return [{"id": m["id"], "profile": card(m["profile"])} for m in discovery.matches(user_id)]
+
+    def can_undo(user):
+        return discovery.can_undo_skip(user.id, test_only=test_feed(user))
 
     async def bootstrap(request):
         user, account = viewer(request, allow_new=True)
@@ -219,7 +222,7 @@ def create_web_app(services=None, bot=None, *, debug=None, test_feed_telegram_id
             "profile": profile_payload(user, account),
             "feed": feed_cards(user) if user else [],
             "matches": match_cards(user.id) if user else [],
-            "can_undo": discovery.can_undo_skip(user.id, test_only=test_feed(user)) if user else False,
+            "can_undo": can_undo(user) if user else False,
         })
 
     async def edit(request):
@@ -263,8 +266,7 @@ def create_web_app(services=None, bot=None, *, debug=None, test_feed_telegram_id
 
     async def feed(request):
         user, _ = viewer(request)
-        can_undo = discovery.can_undo_skip(user.id, test_only=test_feed(user))
-        return web.json_response(feed_cards(user), headers={"X-Can-Undo": "1" if can_undo else "0"})
+        return web.json_response(feed_cards(user), headers={"X-Can-Undo": "1" if can_undo(user) else "0"})
 
     async def react(request):
         user, account = viewer(request)
@@ -291,14 +293,16 @@ def create_web_app(services=None, bot=None, *, debug=None, test_feed_telegram_id
                 await bot.send_message(peer.telegram_id, message, request_timeout=5)
             except (DomainError, TelegramAPIError, TimeoutError):
                 pass  # The committed match is still available to both users.
-        return web.json_response({"matched": result["matched"],
+        return web.json_response({"matched": result["matched"], "feed": feed_cards(user), "can_undo": can_undo(user),
                                   **({"match_id": result["match_id"]} if result["matched"] else {})})
 
     async def undo(request):
         user, _ = viewer(request)
         target = discovery.undo_skip(user.id, test_only=test_feed(user))
         rows = feed_cards(user, preferred_id=target) if target else []
-        return web.json_response({"undone": target is not None, "card": rows[0] if rows else None})
+        if rows:
+            rows += [r for r in feed_cards(user, record_impressions=False) if r["id"] != target][:1]
+        return web.json_response({"undone": target is not None, "card": rows[0] if rows else None, "feed": rows})
 
     async def matches(request):
         user, _ = viewer(request)
@@ -322,6 +326,8 @@ def create_web_app(services=None, bot=None, *, debug=None, test_feed_telegram_id
         def allowed():
             if target_id == user.id:
                 return True
+            if request.query.get("prefetch") == "1":
+                return any(r["id"] == target_id for r in feed_cards(user, record_impressions=False))
             # Serve only previously shown cards that are still eligible for this viewer.
             with services.db.session() as session:
                 shown = session.scalar(select(Event.id).where(
@@ -335,7 +341,15 @@ def create_web_app(services=None, bot=None, *, debug=None, test_feed_telegram_id
             raise web.HTTPNotFound()
         fixture = profiles.test_photo_file(target_id)
         if fixture:
-            return web.FileResponse(fixture)
+            key = (fixture, fixture.stat().st_mtime_ns)
+            if key not in photo_cache:
+                photo_cache[key] = await to_thread(lambda: thumbnail(fixture.read_bytes()))
+                if not allowed():
+                    raise web.HTTPNotFound()
+            photo_cache.move_to_end(key)
+            if len(photo_cache) > 32:
+                photo_cache.popitem(last=False)
+            return web.Response(body=photo_cache[key], content_type="image/webp")
         file_id = profiles.photo_file(target_id)
         if file_id:
             if file_id in photo_cache:
