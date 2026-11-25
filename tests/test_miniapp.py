@@ -58,6 +58,34 @@ async def test_demo_and_auth(web_bot, users):
     assert h.sent()[-1].reply_markup.inline_keyboard[0][0].web_app.url == h.settings.miniapp_url
 
 
+async def test_local_debug_keeps_the_api_on_loopback(service, users, unused_tcp_port):
+    from aiohttp import ClientSession
+
+    h = Harness(service)
+    user = users(73)
+    h.settings.miniapp_port = unused_tcp_port
+    h.settings.miniapp_debug_telegram_id = 73
+    h.settings.miniapp_debug = True
+    h.settings.miniapp_url = "https://party.example/miniapp"
+    url = h.settings.miniapp_local_url
+    async with miniapp_server(h.settings, service, h.bot), ClientSession() as client:
+        async with client.get(url) as r:
+            page = await r.text()
+            assert 'data-local-debug="true"' in page and "telegram-web-app.js" not in page
+        async with client.get(url + "/api/me") as r:
+            assert r.status == 401
+        debug = {"X-PartyUp-Debug": "1"}
+        for forwarded in ({"Host": "party.example"}, {"X-Forwarded-For": "192.0.2.1"},
+                          {"Origin": "https://party.example"}):
+            async with client.get(url + "/api/me", headers=debug | forwarded) as r:
+                assert r.status == 403
+        async with client.get(url + "/api/bootstrap", headers=debug) as r:
+            assert (await r.json())["profile"]["id"] == user.id
+        await h.update(73, "/miniapp")
+        assert url in h.sent()[-1].text and h.sent()[-1].reply_markup is None
+    await h.bot.session.close()
+
+
 @pytest.mark.parametrize("web_first", [True, False])
 async def test_cross_surface_match(web_bot, service, web_first):
     client, h = web_bot

@@ -52,12 +52,12 @@ async def run_polling(bot, dispatcher, settings, discovery):
     ]
     if settings.enable_test_profiles:
         commands.append(BotCommand(command="test", description="Тестовые анкеты с фотографиями"))
-    if settings.miniapp_url:
+    if settings.miniapp_url or settings.miniapp_debug:
         commands.append(BotCommand(command="miniapp", description="Открыть PartyUp"))
     await bot.set_my_commands(commands)
     menu_button = (
         MenuButtonWebApp(text="Открыть PartyUp", web_app=WebAppInfo(url=settings.miniapp_url))
-        if settings.miniapp_url else MenuButtonCommands()
+        if settings.miniapp_url and not settings.miniapp_debug else MenuButtonCommands()
     )
     await bot.set_chat_menu_button(menu_button=menu_button)
     for developer_id in settings.developers:

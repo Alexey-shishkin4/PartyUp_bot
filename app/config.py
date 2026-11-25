@@ -1,7 +1,7 @@
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     bot_token: str = ""
     miniapp_url: str = ""
     miniapp_port: int = Field(default=8766, ge=1, le=65535)
+    miniapp_debug: bool = False
+    miniapp_debug_telegram_id: int | None = Field(default=None, gt=0, lt=2**52)
 
     @field_validator("miniapp_url")
     @classmethod
@@ -39,6 +41,16 @@ class Settings(BaseSettings):
     postgres_db: str = "partyup"
     postgres_user: str = "partyup"
     postgres_password: SecretStr = SecretStr("")
+
+    @model_validator(mode="after")
+    def validate_miniapp_debug(self):
+        if self.miniapp_debug and self.miniapp_debug_telegram_id is None:
+            raise ValueError("Для MINIAPP_DEBUG укажите MINIAPP_DEBUG_TELEGRAM_ID")
+        return self
+
+    @property
+    def miniapp_local_url(self) -> str:
+        return f"http://127.0.0.1:{self.miniapp_port}/miniapp"
 
     @field_validator("admin_ids", "developer_ids")
     @classmethod

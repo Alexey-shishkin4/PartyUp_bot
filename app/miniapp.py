@@ -9,7 +9,7 @@ from io import BytesIO
 
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BufferedInputFile
-from aiogram.utils.web_app import safe_parse_webapp_init_data
+from aiogram.utils.web_app import WebAppUser, safe_parse_webapp_init_data
 from aiohttp import web
 from PIL import Image, ImageOps
 from pydantic import ValidationError
@@ -102,16 +102,31 @@ async def headers(request, handler):
     return response
 
 
-def create_web_app(services=None, bot=None):
-    app = web.Application(middlewares=[headers], client_max_size=16 * 1024)
+def create_web_app(services=None, bot=None, *, debug=None):
+    @web.middleware
+    async def local_only(request, handler):
+        if request.remote != "127.0.0.1" or request.headers.get("Host") != f"127.0.0.1:{debug.miniapp_port}":
+            raise web.HTTPForbidden()
+        if any(key in request.headers for key in ("Forwarded", "X-Forwarded-Host", "X-Forwarded-For", "X-Forwarded-Proto")):
+            raise web.HTTPForbidden()
+        origin = request.headers.get("Origin")
+        if origin and origin != f"http://127.0.0.1:{debug.miniapp_port}":
+            raise web.HTTPForbidden()
+        response = await handler(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+    app = web.Application(middlewares=[headers, local_only] if debug else [headers], client_max_size=16 * 1024)
 
     async def page(request):
         demo = request.path == "/miniapp/demo"
         html = (STATIC / "index.html").read_text(encoding="utf-8")
-        sdk = '' if demo else '<script defer src="https://telegram.org/js/telegram-web-app.js"></script>'
+        sdk = '' if demo or debug else '<script defer src="https://telegram.org/js/telegram-web-app.js"></script>'
+        mode = "Демо · 18+" if demo else "Debug · 18+" if debug else "18+"
         return web.Response(text=html.replace("<!-- SDK -->", sdk)
                             .replace("{{entry}}", "app" if demo else "live")
-                            .replace("{{mode}}", "Демо · 18+" if demo else "18+"), content_type="text/html")
+                            .replace("{{local_debug}}", "true" if debug and not demo else "false")
+                            .replace("{{mode}}", mode), content_type="text/html")
 
     async def demo_deck(request):
         return web.json_response(deck())
@@ -143,8 +158,16 @@ def create_web_app(services=None, bot=None):
     photo_cache = OrderedDict()
 
     def viewer(request, *, allow_new=False):
-        account = authenticate(request, bot)
-        user = profiles.user_by_telegram(account.id)
+        if debug:
+            if request.headers.get("X-PartyUp-Debug") != "1":
+                raise web.HTTPUnauthorized()
+            telegram_id = debug.miniapp_debug_telegram_id
+            user = profiles.user_by_telegram(telegram_id)
+            account = WebAppUser(id=telegram_id, first_name=user.name if user else "Игрок",
+                                 username=user.username if user else None)
+        else:
+            account = authenticate(request, bot)
+            user = profiles.user_by_telegram(account.id)
         if not user and not allow_new:
             raise web.HTTPForbidden(text="Сначала создай анкету командой /start в боте.")
         if user and (user.banned or user.is_test):
@@ -337,13 +360,15 @@ def create_web_app(services=None, bot=None):
 
 @asynccontextmanager
 async def miniapp_server(settings, services, bot):
-    if not settings.miniapp_url:
+    if not settings.miniapp_url and not settings.miniapp_debug:
         yield
         return
-    runner = web.AppRunner(create_web_app(services, bot), access_log=None)
+    debug = settings if settings.miniapp_debug else None
+    runner = web.AppRunner(create_web_app(services, bot, debug=debug), access_log=None)
     await runner.setup()
     try:
-        await web.TCPSite(runner, "0.0.0.0", settings.miniapp_port).start()
+        host = "127.0.0.1" if debug else "0.0.0.0"
+        await web.TCPSite(runner, host, settings.miniapp_port).start()
         yield
     finally:
         await runner.cleanup()

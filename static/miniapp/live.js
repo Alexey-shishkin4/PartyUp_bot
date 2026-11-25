@@ -3,6 +3,7 @@
 const el = id => document.getElementById(id);
 const tabs = [...document.querySelectorAll("[data-tab]")];
 const tg = window.Telegram?.WebApp;
+const localDebug = document.body.dataset.localDebug === "true";
 let tab = "feed";
 let current;
 let busy = false;
@@ -22,8 +23,9 @@ function node(tag, text, cls) {
 
 async function api(path, method = "GET", data) {
   const file = data instanceof Blob;
+  const identity = localDebug ? { "X-PartyUp-Debug": "1" } : { Authorization: "tma " + tg.initData };
   const response = await fetch("/miniapp/api/" + path, {
-    method, headers: { Authorization: "tma " + tg.initData, "Content-Type": file ? data.type : "application/json" },
+    method, headers: { ...identity, "Content-Type": file ? data.type : "application/json" },
     body: file ? data : (data === undefined ? undefined : JSON.stringify(data)),
     signal: method === "GET" ? AbortSignal.timeout?.(15000) : undefined
   });
@@ -37,6 +39,7 @@ async function api(path, method = "GET", data) {
 
 function backButton() {
   const inner = trail.length > 0 || profileMode === "edit" || el("mutual").open;
+  if (localDebug) el("go-back").hidden = !inner;
   el("go-back").textContent = inner ? "← Назад" : "← В чат";
   if (tg?.isVersionAtLeast("6.1")) {
     if (inner) tg.BackButton.show(); else tg.BackButton.hide();
@@ -139,7 +142,8 @@ async function showContact(slot, id) {
     if (!username) { slot.textContent = "У игрока пока нет @username."; return; }
     const link = node("a", "@" + username);
     link.href = "https://t.me/" + username;
-    link.onclick = event => { event.preventDefault(); tg.openTelegramLink(link.href); };
+    if (tg) link.onclick = event => { event.preventDefault(); tg.openTelegramLink(link.href); };
+    else { link.target = "_blank"; link.rel = "noopener"; }
     slot.replaceChildren(link);
   } catch (error) {
     const retry = node("button", "Обновить контакт");
@@ -270,15 +274,15 @@ function react(kind) {
 
 async function start() {
   tabs.forEach(button => { button.disabled = true; });
-  if (!tg?.initData) {
+  if (!tg?.initData && !localDebug) {
     el("startup-animation").hidden = true;
     el("startup-spinner").hidden = true;
     el("loading").querySelector("p").textContent = "Открой PartyUp через /miniapp в личном чате с ботом.";
     el("preview").hidden = false;
     return;
   }
-  tg.ready();
-  tg.expand();
+  tg?.ready();
+  tg?.expand();
   el("retry").hidden = true;
   el("startup-animation").hidden = false;
   el("startup-spinner").hidden = false;
@@ -289,7 +293,7 @@ async function start() {
     ownProfileAt = Date.now();
     el("loading").hidden = true;
     tabs.forEach(button => { button.disabled = false; });
-    el("go-back").hidden = false;
+    if (!localDebug) el("go-back").hidden = false;
     await navigate(initial.profile.registered ? "feed" : "profile", false, initial);
   } catch (e) {
     el("startup-animation").hidden = true;

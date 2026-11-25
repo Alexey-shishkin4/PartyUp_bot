@@ -14,6 +14,12 @@ def build_common_router(profiles, settings):
 
     @router.message(Command("miniapp"))
     async def open_miniapp(message: Message):
+        if settings.miniapp_debug:
+            if message.from_user.id == settings.miniapp_debug_telegram_id:
+                await message.answer(f"Открой в браузере на компьютере с ботом:\n<code>{settings.miniapp_local_url}</code>")
+            else:
+                await message.answer("Mini App сейчас работает в локальном режиме разработки.")
+            return
         if not settings.miniapp_url:
             await message.answer("Mini App пока не подключён. Подбор доступен через /find.")
             return
