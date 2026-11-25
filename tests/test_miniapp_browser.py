@@ -31,6 +31,7 @@ async def test_mobile_and_desktop_miniapp(service, users):
             errors = []
             requests = []
             finish_photo = Event()
+            photo_requested = Event()
             photo_responses = iter([
                 {"status": 502, "body": "Bad Gateway"},
                 {"status": 200, "body": "not an image", "content_type": "image/webp"},
@@ -51,6 +52,7 @@ async def test_mobile_and_desktop_miniapp(service, users):
                 await route.continue_()
 
             async def slow_photo(route):
+                photo_requested.set()
                 await finish_photo.wait()
                 response = next(photo_responses, None)
                 if response:
@@ -59,7 +61,7 @@ async def test_mobile_and_desktop_miniapp(service, users):
                     await route.fulfill(path=ROOT / "static/miniapp/avatar.webp", content_type="image/webp")
 
             await page.route(f"**/miniapp/api/photo/{a.id}", slow_photo)
-            await page.route("**/miniapp/intro?once=1", hold_intro)
+            await page.route("**/miniapp/intro?loop=1", hold_intro)
             await page.route("**/miniapp/api/bootstrap", hold_bootstrap)
             await page.route("https://telegram.org/js/telegram-web-app.js",
                              lambda route: route.fulfill(body=sdk, content_type="application/javascript"))
@@ -73,19 +75,22 @@ async def test_mobile_and_desktop_miniapp(service, users):
                 await expect(page.locator("#loading")).to_be_visible()
                 release_intro.set()
                 await page.locator("#startup-animation img").evaluate("(img) => img.decode()")
+                await wait_for(photo_requested.wait(), timeout=5)
                 await expect(page.locator("#loading")).to_be_visible()
-                await expect(page.locator("#name")).to_contain_text(b.name, timeout=8000)
+                await expect(page.locator("#player")).to_be_hidden()
+                finish_photo.set()
                 await expect(page.locator("#loading")).to_be_hidden()
+                await expect(page.locator("#name")).to_be_visible()
+                await expect(page.locator("#name")).to_contain_text(b.name)
             finally:
                 release_bootstrap.set()
                 release_intro.set()
-            assert [url.split("/api/")[1] for url in requests if "/api/" in url] == ["bootstrap"]
+                finish_photo.set()
+            assert [url.split("/api/")[1] for url in requests if "/api/" in url] == ["bootstrap", f"photo/{a.id}"]
             assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             await page.locator("[data-tab=profile]").click()
             await expect(page.locator("#own-name")).to_contain_text(a.name)
-            await expect(page.locator("#own-card .portrait")).to_have_attribute("aria-busy", "true")
             await expect(page.locator("#edit-profile")).to_be_enabled()
-            finish_photo.set()
             retry_photo = page.locator("#own-card .retry-photo")
             await expect(retry_photo).to_be_visible()
             await expect(page.locator("#own-photo")).to_be_hidden()
@@ -95,6 +100,14 @@ async def test_mobile_and_desktop_miniapp(service, users):
             await retry_photo.click()
             await expect(page.locator("#own-photo")).to_be_visible()
             assert await page.locator("#own-photo").evaluate("(img) => img.naturalWidth > 0")
+            loaded = len(requests)
+            await page.locator("[data-tab=matches]").click()
+            await expect(page.locator("#match-empty")).to_be_visible()
+            await page.locator("[data-tab=feed]").click()
+            await expect(page.locator("#name")).to_contain_text(b.name)
+            await page.locator("[data-tab=profile]").click()
+            await expect(page.locator("#own-photo")).to_be_visible()
+            assert len(requests) == loaded
             await page.locator("#edit-profile").click()
             await page.locator("#nickname").fill("Мобильный игрок")
             await expect(page.locator("#share")).to_have_count(0)
@@ -112,6 +125,11 @@ async def test_mobile_and_desktop_miniapp(service, users):
             await expect(page.locator("#mutual-contact a")).to_have_text("@current502")
             await page.locator("#show-matches").click()
             await expect(page.get_by_role("link", name="@current502")).to_have_attribute("href", "https://t.me/current502")
+            loaded = len(requests)
+            await page.locator("[data-tab=feed]").click()
+            await page.locator("[data-tab=matches]").click()
+            await expect(page.get_by_role("link", name="@current502")).to_be_visible()
+            assert len(requests) == loaded
             await page.reload()
             await page.locator("[data-tab=profile]").click()
             await expect(page.locator("#own-name")).to_contain_text("Мобильный игрок")

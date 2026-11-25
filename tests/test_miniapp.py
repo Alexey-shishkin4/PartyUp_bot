@@ -44,7 +44,7 @@ async def test_demo_and_auth(web_bot, users):
     assert intro.content_type == "image/webp"
     with Image.open(BytesIO(await intro.read())) as animation:
         assert animation.is_animated and animation.n_frames > 1
-        assert animation.info["loop"] == 1
+        assert animation.info["loop"] == 0
         duration = 0
         for frame in range(animation.n_frames):
             animation.seek(frame)
@@ -128,6 +128,8 @@ async def test_cross_surface_match(web_bot, service, web_first):
     with service.db.session() as session:
         assert session.scalar(select(func.count()).select_from(Match)) == 1
     matches = await (await client.get(path + "matches", headers=auth)).json()
+    startup = await (await client.get(path + "bootstrap", headers=auth)).json()
+    assert startup["matches"] == matches and startup["profile"]["id"] == a.id and isinstance(startup["feed"], list)
     contact = path + f"contact/{matches[0]['id']}"
     assert await (await client.get(contact, headers=auth)).json() == {"username": "current202"}
     await h.update(202, "/matches", username="current202")

@@ -28,6 +28,6 @@ async function playStartup() {
     }
   }
 
-  // Give all frames time to play once, starting after the image has decoded.
+  // Show at least one full loop. The animation keeps playing while data is pending.
   await new Promise(resolve => setTimeout(resolve, remaining));
 }

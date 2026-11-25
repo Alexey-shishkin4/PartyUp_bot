@@ -31,7 +31,7 @@
       <div class="heading"><h1>Найти своих<span>.</span></h1><button class="subtle" id="undo-button" disabled><svg class="icon"><use href="#undo"/></svg>Назад</button></div>
       <div id="loading" class="panel">
         <picture id="startup-animation" data-duration-ms="2640" aria-hidden="true">
-          <source media="(prefers-reduced-motion: no-preference)" srcset="/miniapp/intro?once=1">
+          <source media="(prefers-reduced-motion: no-preference)" srcset="/miniapp/intro?loop=1">
           <img width="240" height="240" fetchpriority="low" alt="">
         </picture>
         <div class="startup-status">
@@ -58,10 +58,10 @@
       </article>
       <div id="empty" class="panel" hidden><img class="brand-art" src="/miniapp/art" loading="lazy" alt=""><div><h2>Пока это все игроки</h2><p>«Назад» вернёт последнюю анкету. Новый просмотр сбросит тестовые лайки и взаимности.</p><button id="again">Начать заново</button></div></div>
     </section>
-    <section id="matches" hidden><div class="heading"><h1>Взаимности<span>.</span></h1></div>
+    <section id="matches" hidden><div class="heading"><h1>Взаимности<span>.</span></h1><button id="refresh-matches" class="subtle">Обновить</button></div>
       <div class="panel"><p id="match-empty">Здесь появятся игроки, которым ты тоже понравился.</p><ul id="match-list"></ul></div>
     </section>
-    <section id="profile" hidden><div class="heading"><h1><span id="profile-title">Моя анкета</span><span>.</span></h1></div>
+    <section id="profile" hidden><div class="heading"><h1><span id="profile-title">Моя анкета</span><span>.</span></h1><button id="refresh-profile" class="subtle" hidden>Обновить</button></div>
       <article id="own-card" hidden>
         <div class="portrait">
           <svg class="portrait-fallback" aria-hidden="true"><use href="#person"/></svg>
@@ -88,7 +88,6 @@
         <p class="hint">Эта анкета хранится только в этом браузере.</p><button id="save-profile" class="primary" type="submit">Сохранить анкету</button>
       </form>
     </section>
-    <div class="panel" id="section-loading" hidden role="status"><span class="spinner" aria-hidden="true"></span><span>Загружаем…</span></div>
     <p class="status" id="status" role="status"></p>
   </main>
   <nav aria-label="Разделы"><div>

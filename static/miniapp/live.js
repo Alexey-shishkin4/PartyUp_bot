@@ -10,9 +10,10 @@ let busy = false;
 const trail = [];
 let profileMode = "card";
 let ownProfile;
-let ownProfileAt = 0;
 const photos = new WeakMap();
-let viewVersion = 0;
+const contacts = new Map();
+let defaultAvatar;
+let matchRender = 0;
 
 function node(tag, text, cls) {
   const out = document.createElement(tag);
@@ -27,7 +28,7 @@ async function api(path, method = "GET", data) {
   const response = await fetch("/miniapp/api/" + path, {
     method, headers: { ...identity, "Content-Type": file ? data.type : "application/json" },
     body: file ? data : (data === undefined ? undefined : JSON.stringify(data)),
-    signal: method === "GET" ? AbortSignal.timeout?.(15000) : undefined
+    signal: method === "GET" ? AbortSignal.timeout?.(/^(photo|contact)\//.test(path) ? 8000 : 15000) : undefined
   });
   if (!response.ok) {
     throw new Error(response.status >= 500 ? "Сервис временно недоступен. Попробуй ещё раз."
@@ -59,66 +60,48 @@ function showTags(id, games, empty) {
     : [node("span", empty, "hint")]));
 }
 
-async function loadPhoto(img, card, version) {
-  if (photos.has(img)) {
-    URL.revokeObjectURL(photos.get(img));
-    photos.delete(img);
-  }
+async function loadPhoto(img, card) {
+  const previous = photos.get(img);
+  if (previous?.url) URL.revokeObjectURL(previous.url);
+  const loading = {};
+  photos.set(img, loading);
   const portrait = img.closest(".portrait");
   const retry = portrait.querySelector(".retry-photo");
   retry.hidden = true;
-  retry.onclick = () => loadPhoto(img, card, version);
+  retry.onclick = () => loadPhoto(img, card);
   img.hidden = true;
   img.removeAttribute("src");
   portrait.setAttribute("aria-busy", String(card.has_photo));
   let photoFailed = false;
-  if (card.has_photo) {
-    try {
-      const image = await api("photo/" + card.id);
-      if (version !== viewVersion) return;
-      const src = URL.createObjectURL(image);
-      try {
-        img.src = src;
-        await img.decode();
-        if (version !== viewVersion) {
-          URL.revokeObjectURL(src);
-          return;
-        }
-        photos.set(img, src);
-      } catch (error) {
-        URL.revokeObjectURL(src);
-        throw error;
-      }
-    } catch {
-      if (version !== viewVersion) return;
-      photoFailed = true;
+  try {
+    if (!card.has_photo) {
+      defaultAvatar ??= fetch("/miniapp/avatar", {signal: AbortSignal.timeout?.(8000)})
+        .then(response => response.ok ? response.blob() : null).catch(() => null);
     }
-  }
-  if (version !== viewVersion) return;
-  if (photoFailed) img.removeAttribute("src");
-  if (!card.has_photo) {
-    img.src = "/miniapp/avatar";
-    try {
+    const image = card.has_photo ? await api("photo/" + card.id) : await defaultAvatar;
+    if (photos.get(img) !== loading) return;
+    if (image) {
+      loading.url = URL.createObjectURL(image);
+      img.src = loading.url;
       await img.decode();
-    } catch {
-      if (version !== viewVersion) return;
+    }
+  } catch {
+    if (photos.get(img) === loading) {
+      if (loading.url) URL.revokeObjectURL(loading.url);
+      delete loading.url;
       img.removeAttribute("src");
+      photoFailed = card.has_photo;
     }
   }
-  if (version !== viewVersion) return;
+  if (photos.get(img) !== loading) return;
   img.hidden = !img.hasAttribute("src");
   retry.hidden = !photoFailed;
   portrait.setAttribute("aria-busy", "false");
 }
 
-async function loadFeed(version, restored, initial) {
-  current = undefined;
-  el("player").hidden = true;
-  el("empty").hidden = true;
-  const card = restored || (initial ? initial.feed : await api("feed"))[0];
-  if (version !== viewVersion) return;
-  if (initial) el("undo-button").hidden = !initial.can_undo;
+function renderFeed(card) {
   current = card;
+  el("player").hidden = !card;
   el("empty").hidden = Boolean(card);
   if (!card) return;
   el("name").textContent = card.name + ", " + card.age;
@@ -132,13 +115,14 @@ async function loadFeed(version, restored, initial) {
   showTags("common", card.common_games, "Пока нет общих игр");
   showTags("games", [...card.games, ...card.additional_games], "Игры ещё не выбраны");
   el("player").hidden = false;
-  void loadPhoto(el("photo"), card, version);
+  return loadPhoto(el("photo"), card);
 }
 
-async function showContact(slot, id) {
+async function showContact(slot, id, refresh = false) {
   slot.textContent = "Загружаем контакт…";
   try {
-    const { username } = await api("contact/" + id);
+    if (refresh || !contacts.has(id)) contacts.set(id, api("contact/" + id));
+    const { username } = await contacts.get(id);
     if (!username) { slot.textContent = "У игрока пока нет @username."; return; }
     const link = node("a", "@" + username);
     link.href = "https://t.me/" + username;
@@ -147,16 +131,15 @@ async function showContact(slot, id) {
     slot.replaceChildren(link);
   } catch (error) {
     const retry = node("button", "Обновить контакт");
-    retry.onclick = () => showContact(slot, id);
+    retry.onclick = () => showContact(slot, id, true);
     slot.replaceChildren(node("small", error.message), retry);
   }
 }
 
-async function loadMatches(version) {
+async function renderMatches(matches) {
+  const version = ++matchRender;
   el("match-list").replaceChildren();
   el("match-empty").hidden = true;
-  const matches = await api("matches");
-  if (version !== viewVersion) return;
   el("match-empty").hidden = matches.length > 0;
   const pending = matches.map(match => {
     const li = node("li", "");
@@ -165,17 +148,21 @@ async function loadMatches(version) {
     el("match-list").append(li);
     return () => showContact(contact, match.id);
   });
+  // Prepare the first visible contacts. Longer histories continue with four workers.
+  const visible = pending.splice(0, 4);
+  await Promise.all(visible.map(load => load()));
   async function nextContacts() {
-    while (version === viewVersion && pending.length) await pending.shift()();
+    while (version === matchRender && pending.length) await pending.shift()();
   }
-  const workerCount = Math.min(4, pending.length);
-  for (let i = 0; i < workerCount; i++) void nextContacts();
+  const workers = Math.min(4, pending.length);
+  for (let i = 0; i < workers; i++) void nextContacts();
 }
 
 function editor(profile) {
   profileMode = profile.registered ? "edit" : "create";
   el("own-card").hidden = true;
   el("editor").hidden = false;
+  el("refresh-profile").hidden = true;
   el("profile-title").textContent = profile.registered ? "Изменить анкету" : "Создать анкету";
   el("save-profile").textContent = profile.registered ? "Сохранить анкету" : "Опубликовать анкету";
   el("consent-line").hidden = profile.registered;
@@ -200,30 +187,30 @@ function editor(profile) {
   backButton();
 }
 
-async function showProfile(version, initialProfile) {
+function showProfileCard() {
+  if (!ownProfile.registered) { editor(ownProfile); return; }
   el("editor").hidden = true;
-  el("own-card").hidden = true;
-  const profile = initialProfile || (Date.now() - ownProfileAt < 15000 ? ownProfile : await api("me"));
-  if (version !== viewVersion) return;
-  if (profile !== ownProfile) ownProfileAt = Date.now();
+  el("own-card").hidden = false;
+  el("refresh-profile").hidden = false;
+  el("profile-title").textContent = "Моя анкета";
+}
+
+function renderProfile(profile) {
   ownProfile = profile;
   document.querySelector("nav").hidden = !profile.registered;
-  if (!profile.registered) { editor(profile); return; }
-  el("profile-title").textContent = "Моя анкета";
-  el("own-card").hidden = false;
+  if (!profile.registered) return;
   el("own-name").textContent = profile.name + ", " + profile.age;
   el("own-zone").textContent = profile.timezone;
   el("own-purpose").textContent = profile.purpose_label;
   el("own-bio").textContent = profile.bio || "Описание пока не заполнено.";
   showTags("own-games", [...profile.games, ...profile.additional_games], "Игры ещё не выбраны");
-  void loadPhoto(el("own-photo"), profile, version);
+  return loadPhoto(el("own-photo"), profile);
 }
 
-async function navigate(next, remember = true, initial) {
+function navigate(next, remember = true) {
   if (remember && next !== tab) trail.push(tab);
   profileMode = "card";
   tab = next;
-  const version = ++viewVersion;
   for (const button of tabs) {
     const selected = next === button.dataset.tab;
     el(button.dataset.tab).hidden = !selected;
@@ -231,24 +218,15 @@ async function navigate(next, remember = true, initial) {
     else button.removeAttribute("aria-current");
   }
   el("status").textContent = "";
+  if (tab === "profile") showProfileCard();
   backButton();
   window.scrollTo(0, 0);
-  el("section-loading").hidden = Boolean(initial);
-  try {
-    if (tab === "feed") await loadFeed(version, null, initial);
-    else if (tab === "matches") await loadMatches(version);
-    else await showProfile(version, initial?.profile);
-  } catch (e) {
-    if (version === viewVersion) el("status").textContent = e.message;
-  } finally {
-    if (version === viewVersion) el("section-loading").hidden = true;
-  }
 }
 
 async function action(task) {
   if (busy) return;
   busy = true;
-  const controls = [...document.querySelectorAll("nav button, .actions button, #editor button, #again")];
+  const controls = [...document.querySelectorAll("nav button, .actions button, #editor button, #again, #refresh-profile, #refresh-matches, #undo-button")];
   controls.forEach(button => { button.disabled = true; });
   try { await task(); }
   catch (e) { el("status").textContent = e.message; }
@@ -260,8 +238,9 @@ function react(kind) {
     if (!current) return;
     const { matched, match_id } = await api("react", "POST", { target: current.id, kind });
     const name = current.name;
-    await navigate("feed");
+    void renderFeed();
     if (matched) {
+      void api("matches").then(renderMatches).catch(error => { el("status").textContent = error.message; });
       el("match-message").textContent = "У вас с игроком «" + name + "» взаимная симпатия.";
       el("mutual").showModal();
       const slot = node("div", "");
@@ -269,7 +248,19 @@ function react(kind) {
       void showContact(slot, match_id);
       backButton();
     }
+    const [next] = await api("feed");
+    void renderFeed(next);
   });
+}
+
+async function prepareTabs() {
+  const initial = await api("bootstrap");
+  el("undo-button").hidden = !initial.can_undo;
+  await Promise.all([
+    renderProfile(initial.profile),
+    renderFeed(initial.feed[0]),
+    renderMatches(initial.matches)
+  ]);
 }
 
 async function start() {
@@ -288,13 +279,11 @@ async function start() {
   el("startup-spinner").hidden = false;
   el("loading").querySelector("p").textContent = "Открываем PartyUp…";
   try {
-    const [initial] = await Promise.all([api("bootstrap"), waitForStartup()]);
-    ownProfile = initial.profile;
-    ownProfileAt = Date.now();
+    await Promise.all([prepareTabs(), waitForStartup()]);
     el("loading").hidden = true;
     tabs.forEach(button => { button.disabled = false; });
     if (!localDebug) el("go-back").hidden = false;
-    await navigate(initial.profile.registered ? "feed" : "profile", false, initial);
+    navigate(ownProfile.registered ? "feed" : "profile", false);
   } catch (e) {
     el("startup-animation").hidden = true;
     el("startup-spinner").hidden = true;
@@ -321,13 +310,23 @@ el("game-search").oninput = event => {
 };
 tabs.forEach(button => { button.onclick = () => navigate(button.dataset.tab); });
 el("retry").onclick = start;
-el("again").onclick = () => navigate("feed");
+el("again").onclick = () => action(async () => { const [card] = await api("feed"); await renderFeed(card); });
+el("refresh-profile").onclick = () => action(async () => {
+  await renderProfile(await api("me"));
+  showProfileCard();
+});
+el("refresh-matches").onclick = () => action(async () => {
+  const matches = await api("matches");
+  contacts.clear();
+  await renderMatches(matches);
+});
 el("pass").onclick = () => react("skip");
 el("like").onclick = () => react("like");
 el("undo-button").onclick = () => action(async () => {
   const result = await api("undo", "POST");
   el("undo-button").hidden = true;
-  await loadFeed(++viewVersion, result.card);
+  const card = result.card || (await api("feed"))[0];
+  void renderFeed(card);
   el("status").textContent = result.card ? "Предыдущая анкета возвращена." : "Этот пропуск больше нельзя вернуть.";
 });
 el("editor").onsubmit = event => {
@@ -350,8 +349,10 @@ el("editor").onsubmit = event => {
       try { await api("me/photo", "PUT", file); }
       catch (error) { message += " Фото не изменилось. " + error.message; }
     }
-    ownProfileAt = 0;
-    await navigate("profile", false);
+    const [profile, [card]] = await Promise.all([api("me"), api("feed")]);
+    void renderProfile(profile);
+    void renderFeed(card);
+    navigate("profile", false);
     el("status").textContent = message;
   });
 };

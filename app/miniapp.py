@@ -203,11 +203,15 @@ def create_web_app(services=None, bot=None, *, debug=None):
         return [{**card(r["profile"]), "common_games": r["common_games"]}
                 for r in discovery.feed(user_id, limit=1)]
 
+    def match_cards(user_id):
+        return [{"id": m["id"], "profile": card(m["profile"])} for m in discovery.matches(user_id)]
+
     async def bootstrap(request):
         user, account = viewer(request, allow_new=True)
         return web.json_response({
             "profile": profile_payload(user, account),
             "feed": first_card(user.id) if user else [],
+            "matches": match_cards(user.id) if user else [],
             "can_undo": discovery.can_undo_skip(user.id) if user else False,
         })
 
@@ -290,7 +294,7 @@ def create_web_app(services=None, bot=None, *, debug=None):
 
     async def matches(request):
         user, _ = viewer(request)
-        return web.json_response([{"id": m["id"], "profile": card(m["profile"])} for m in discovery.matches(user.id)])
+        return web.json_response(match_cards(user.id))
 
     async def contact(request):
         user, _ = viewer(request)
