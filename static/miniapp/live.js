@@ -288,7 +288,7 @@ async function start() {
   el("startup-spinner").hidden = false;
   el("loading").querySelector("p").textContent = "Открываем PartyUp…";
   try {
-    const initial = await api("bootstrap");
+    const [initial] = await Promise.all([api("bootstrap"), waitForStartup()]);
     ownProfile = initial.profile;
     ownProfileAt = Date.now();
     el("loading").hidden = true;

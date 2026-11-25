@@ -8,6 +8,7 @@
   <link rel="icon" href="/miniapp/avatar">
   <link rel="stylesheet" href="/static/miniapp/style.css">
   <!-- SDK -->
+  <script defer src="/static/miniapp/startup.js"></script>
   <script defer src="/static/miniapp/{{entry}}.js"></script>
 </head>
 <body data-local-debug="{{local_debug}}">
@@ -29,8 +30,8 @@
     <section id="feed">
       <div class="heading"><h1>Найти своих<span>.</span></h1><button class="subtle" id="undo-button" disabled><svg class="icon"><use href="#undo"/></svg>Назад</button></div>
       <div id="loading" class="panel">
-        <picture id="startup-animation" aria-hidden="true">
-          <source media="(prefers-reduced-motion: no-preference)" srcset="/miniapp/intro">
+        <picture id="startup-animation" data-duration-ms="2640" aria-hidden="true">
+          <source media="(prefers-reduced-motion: no-preference)" srcset="/miniapp/intro?once=1">
           <img width="240" height="240" fetchpriority="low" alt="">
         </picture>
         <div class="startup-status">

@@ -59,7 +59,7 @@ async def test_mobile_and_desktop_miniapp(service, users):
                     await route.fulfill(path=ROOT / "static/miniapp/avatar.webp", content_type="image/webp")
 
             await page.route(f"**/miniapp/api/photo/{a.id}", slow_photo)
-            await page.route("**/miniapp/intro", hold_intro)
+            await page.route("**/miniapp/intro?once=1", hold_intro)
             await page.route("**/miniapp/api/bootstrap", hold_bootstrap)
             await page.route("https://telegram.org/js/telegram-web-app.js",
                              lambda route: route.fulfill(body=sdk, content_type="application/javascript"))
@@ -67,8 +67,14 @@ async def test_mobile_and_desktop_miniapp(service, users):
             try:
                 await wait_for(gather(intro_requested.wait(), bootstrap_requested.wait()), timeout=8)
                 await expect(page.locator("#startup-animation")).to_be_visible()
-                release_bootstrap.set()
-                await expect(page.locator("#name")).to_contain_text(b.name)
+                async with page.expect_response("**/miniapp/api/bootstrap") as bootstrap:
+                    release_bootstrap.set()
+                assert await (await bootstrap.value).finished() is None
+                await expect(page.locator("#loading")).to_be_visible()
+                release_intro.set()
+                await page.locator("#startup-animation img").evaluate("(img) => img.decode()")
+                await expect(page.locator("#loading")).to_be_visible()
+                await expect(page.locator("#name")).to_contain_text(b.name, timeout=8000)
                 await expect(page.locator("#loading")).to_be_hidden()
             finally:
                 release_bootstrap.set()

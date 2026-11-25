@@ -147,7 +147,7 @@ async function start() {
   byId("startup-spinner").hidden = false;
   tabs.forEach(button => { button.disabled = true; });
   try {
-    const response = await fetch("/miniapp/deck");
+    const [response] = await Promise.all([fetch("/miniapp/deck"), waitForStartup()]);
     if (!response.ok) throw new Error("Deck unavailable");
     cards = await response.json();
     restore();

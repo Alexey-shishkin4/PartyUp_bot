@@ -44,6 +44,13 @@ async def test_demo_and_auth(web_bot, users):
     assert intro.content_type == "image/webp"
     with Image.open(BytesIO(await intro.read())) as animation:
         assert animation.is_animated and animation.n_frames > 1
+        assert animation.info["loop"] == 1
+        duration = 0
+        for frame in range(animation.n_frames):
+            animation.seek(frame)
+            animation.load()
+            duration += animation.info["duration"]
+    assert f'data-duration-ms="{duration}"' in await page.text()
     deck = await (await client.get("/miniapp/deck")).json()
     assert len(deck) == 6 and (await client.get(deck[0]["photo"])).status == 200
     for headers in ({}, signed("anotherKey", 11), signed(h.bot.token, 11, 3700), signed(h.bot.token, 11, -60)):
