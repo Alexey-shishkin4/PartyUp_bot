@@ -42,7 +42,9 @@ async def test_demo_and_auth(web_bot, users):
     assert len(deck) == 6 and (await client.get(deck[0]["photo"])).status == 200
     for headers in ({}, signed("anotherKey", 11), signed(h.bot.token, 11, 3700), signed(h.bot.token, 11, -60)):
         assert (await client.get("/miniapp/api/me", headers=headers)).status == 401
-    assert (await client.get("/miniapp/api/me", headers=signed(h.bot.token, 12))).status == 403
+    new = await (await client.get("/miniapp/api/me", headers=signed(h.bot.token, 12))).json()
+    assert not new["registered"] and new["catalog"]
+    assert (await client.get("/miniapp/api/feed", headers=signed(h.bot.token, 12))).status == 403
     await h.update(11, "/miniapp")
     assert "/find" in h.sent()[-1].text
     h.settings.miniapp_url = "https://party.example/miniapp"
@@ -107,10 +109,31 @@ async def test_skip_undo_consent_and_private_photo(web_bot, service, users):
     assert (await client.post(path + "react", json={"target": b.id, "kind": "skip"}, headers=auth)).status == 200
     photo = path + f"photo/{b.id}"
     assert (await client.get(photo, headers=auth)).status == 404
-    assert await (await client.post(path + "undo", headers=auth)).json() == {"undone": True}
+    assert (await client.get(path + "feed", headers=auth)).headers["X-Can-Undo"] == "1"
+    restored = await (await client.post(path + "undo", headers=auth)).json()
+    assert restored["undone"] and restored["card"]["id"] == b.id
     assert (await client.get(photo, headers=auth)).content_type == "image/png"
     service.discovery.react(a.id, b.id, "block")
     assert (await client.get(photo, headers=auth)).status == 404
+
+
+async def test_registration_consent_duplicate_and_photo(web_bot, service):
+    client, h = web_bot
+    path = "/miniapp/api/me"
+    auth = signed(h.bot.token, 66)
+    data = {"name": "Первый вход", "age": 21, "timezone": "Europe/Moscow", "purpose": "friends",
+            "bio": "", "game_ids": [1245620], "share_username": False}
+    assert (await client.post(path, json=data, headers=auth)).status == 400
+    data["consent"] = True
+    assert (await client.post(path, json={**data, "age": 17}, headers=auth)).status == 400
+    assert service.profiles.user_by_telegram(66) is None
+    assert (await client.post(path, json=data, headers=auth)).status == 200
+    assert (await client.post(path, json={**data, "name": "Дубликат"}, headers=auth)).status == 409
+    user = service.profiles.user_by_telegram(66)
+    assert user.name == data["name"] and user.use_default_avatar and not user.share_username
+    assert (await client.put(path + "/photo", data=b"bytes", headers=auth)).status == 400
+    assert (await client.put(path + "/photo", data=b"photo", headers={**auth, "Content-Type": "image/jpeg"})).status == 200
+    assert service.profiles.photo_file(user.id) and h.photos_sent()[-1].chat_id == 66
 
 
 async def test_configured_http_server_and_uploaded_photo(service, users, unused_tcp_port, monkeypatch):

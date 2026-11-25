@@ -7,7 +7,10 @@ let tab = "feed";
 let current;
 let photoURL;
 let busy = false;
-let lastSkip = false;
+const trail = [];
+let profileMode = "card";
+let ownProfile;
+let ownPhotoURL;
 let viewVersion = 0;
 
 function node(tag, text, cls) {
@@ -18,21 +21,33 @@ function node(tag, text, cls) {
 }
 
 async function api(path, method = "GET", data) {
+  const file = data instanceof Blob;
   const response = await fetch("/miniapp/api/" + path, {
-    method, headers: { Authorization: "tma " + tg.initData, "Content-Type": "application/json" },
-    body: data === undefined ? undefined : JSON.stringify(data)
+    method, headers: { Authorization: "tma " + tg.initData, "Content-Type": file ? data.type : "application/json" },
+    body: file ? data : (data === undefined ? undefined : JSON.stringify(data))
   });
   if (!response.ok) {
     throw new Error(response.status >= 500 ? "Сервис временно недоступен. Попробуй ещё раз."
       : (await response.text()) || "Не удалось выполнить запрос.");
   }
+  if (path === "feed") el("undo-button").hidden = response.headers.get("X-Can-Undo") !== "1";
   return path.startsWith("photo/") ? response.blob() : response.json();
 }
 
 function backButton() {
-  if (!tg?.isVersionAtLeast("6.1")) return;
-  if (tab === "feed" && !el("mutual").open) tg.BackButton.hide();
-  else tg.BackButton.show();
+  const inner = trail.length > 0 || profileMode === "edit" || el("mutual").open;
+  el("go-back").textContent = inner ? "← Назад" : "← В чат";
+  if (tg?.isVersionAtLeast("6.1")) {
+    if (inner) tg.BackButton.show(); else tg.BackButton.hide();
+  }
+}
+
+function goBack() {
+  if (busy) return;
+  if (el("mutual").open) el("mutual").close();
+  else if (tab === "profile" && profileMode === "edit") navigate("profile", false);
+  else if (trail.length) navigate(trail.pop(), false);
+  else tg?.close();
 }
 
 function showTags(id, games, empty) {
@@ -40,14 +55,13 @@ function showTags(id, games, empty) {
     : [node("span", empty, "hint")]));
 }
 
-async function loadFeed(version) {
+async function loadFeed(version, restored) {
   current = undefined;
   el("player").hidden = true;
   el("empty").hidden = true;
-  const [card] = await api("feed");
+  const card = restored || (await api("feed"))[0];
   if (version !== viewVersion) return;
   current = card;
-  el("undo-button").disabled = !lastSkip;
   el("empty").hidden = Boolean(card);
   if (!card) return;
   el("photo").src = "/miniapp/avatar";
@@ -60,7 +74,7 @@ async function loadFeed(version) {
   el("schedule").textContent = card.timezone + (card.schedule_set ?
     " · " + hour(card.start_hour) + "–" + hour(card.end_hour) : "");
   showTags("common", card.common_games, "Пока нет общих игр");
-  showTags("games", card.games, "Игры ещё не выбраны");
+  showTags("games", [...card.games, ...card.additional_games], "Игры ещё не выбраны");
   el("player").hidden = false;
   if (card.has_photo) {
     try {
@@ -100,21 +114,63 @@ async function loadMatches(version) {
 }
 
 function editor(profile) {
+  profileMode = profile.registered ? "edit" : "create";
+  el("own-card").hidden = true;
+  el("editor").hidden = false;
+  el("profile-title").textContent = profile.registered ? "Изменить анкету" : "Создать анкету";
+  el("save-profile").textContent = profile.registered ? "Сохранить анкету" : "Опубликовать анкету";
+  el("consent-line").hidden = profile.registered;
+  el("consent").required = !profile.registered;
+  el("consent").checked = false;
+  el("avatar-file").value = "";
+  el("game-search").value = "";
+  el("age").value = profile.age || "";
+  el("zone").value = profile.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Moscow";
+  el("purpose").value = profile.purpose || "both";
   el("nickname").value = profile.name;
-  el("about").value = profile.bio;
+  el("about").value = profile.bio || "";
   el("share").checked = profile.share_username;
   el("choices").replaceChildren(...profile.catalog.map(game => {
     const label = node("label", "", "choice");
     const check = document.createElement("input");
     check.type = "checkbox";
     check.value = game.id;
-    check.checked = profile.game_ids.includes(game.id);
+    check.checked = (profile.game_ids || []).includes(game.id);
     label.append(check, node("span", game.name));
     return label;
   }));
+  backButton();
 }
 
-async function navigate(next) {
+async function showProfile(version) {
+  el("editor").hidden = true;
+  el("own-card").hidden = true;
+  const profile = await api("me");
+  if (version !== viewVersion) return;
+  ownProfile = profile;
+  document.querySelector("nav").hidden = !profile.registered;
+  if (!profile.registered) { editor(profile); return; }
+  el("profile-title").textContent = "Моя анкета";
+  el("own-card").hidden = false;
+  el("own-name").textContent = profile.name + ", " + profile.age;
+  el("own-zone").textContent = profile.timezone;
+  el("own-purpose").textContent = profile.purpose_label;
+  el("own-bio").textContent = profile.bio || "Описание пока не заполнено.";
+  showTags("own-games", [...profile.games, ...profile.additional_games], "Игры ещё не выбраны");
+  el("own-photo").src = "/miniapp/avatar";
+  if (ownPhotoURL) { URL.revokeObjectURL(ownPhotoURL); ownPhotoURL = undefined; }
+  if (profile.has_photo) {
+    const image = await api("photo/" + profile.id);
+    if (version === viewVersion) {
+      ownPhotoURL = URL.createObjectURL(image);
+      el("own-photo").src = ownPhotoURL;
+    }
+  }
+}
+
+async function navigate(next, remember = true) {
+  if (remember && next !== tab) trail.push(tab);
+  profileMode = "card";
   tab = next;
   const version = ++viewVersion;
   for (const button of tabs) {
@@ -129,11 +185,7 @@ async function navigate(next) {
   try {
     if (tab === "feed") await loadFeed(version);
     else if (tab === "matches") await loadMatches(version);
-    else {
-      el("editor").hidden = true;
-      const profile = await api("me");
-      if (version === viewVersion) { editor(profile); el("editor").hidden = false; }
-    }
+    else await showProfile(version);
   } catch (e) {
     if (version === viewVersion) el("status").textContent = e.message;
   }
@@ -153,7 +205,6 @@ function react(kind) {
   return action(async () => {
     if (!current) return;
     const { matched } = await api("react", "POST", { target: current.id, kind });
-    lastSkip = kind === "skip";
     const name = current.name;
     await navigate("feed");
     if (matched) {
@@ -174,10 +225,11 @@ async function start() {
   tg.ready();
   tg.expand();
   try {
-    await api("me");
+    const profile = await api("me");
     el("loading").hidden = true;
     tabs.forEach(button => { button.disabled = false; });
-    await navigate("feed");
+    el("go-back").hidden = false;
+    await navigate(profile.registered ? "feed" : "profile", false);
   } catch (e) {
     el("loading").querySelector("p").textContent = e.message;
     el("retry").hidden = false;
@@ -186,7 +238,20 @@ async function start() {
 
 el("empty").querySelector("p").textContent = "Новые анкеты появятся здесь. Поиск можно обновить.";
 el("again").textContent = "Обновить подбор";
-el("editor").querySelector(".hint").textContent = "Изменения появятся и в боте. Фото можно заменить через /photo.";
+el("editor").querySelector(".hint").textContent = "Выбери до 10 игр. Эту анкету увидят в боте и в Mini App.";
+el("details").hidden = el("avatar-tools").hidden = el("game-search").hidden = false;
+el("age").required = el("zone").required = true;
+el("zones").replaceChildren(...(Intl.supportedValuesOf?.("timeZone") || ["Europe/Moscow", "Asia/Novosibirsk"])
+  .map(zone => node("option", zone)));
+el("edit-profile").onclick = () => editor(ownProfile);
+el("go-back").onclick = goBack;
+el("undo-button").textContent = "Вернуть пропуск";
+el("undo-button").disabled = false;
+el("undo-button").hidden = true;
+el("game-search").oninput = event => {
+  const query = event.target.value.trim().toLowerCase();
+  for (const label of el("choices").children) label.hidden = !label.textContent.toLowerCase().includes(query);
+};
 el("sharing").hidden = false;
 tabs.forEach(button => { button.onclick = () => navigate(button.dataset.tab); });
 el("retry").onclick = start;
@@ -194,24 +259,37 @@ el("again").onclick = () => navigate("feed");
 el("pass").onclick = () => react("skip");
 el("like").onclick = () => react("like");
 el("undo-button").onclick = () => action(async () => {
-  await api("undo", "POST");
-  lastSkip = false;
-  await navigate("feed");
+  const result = await api("undo", "POST");
+  el("undo-button").hidden = true;
+  await loadFeed(++viewVersion, result.card);
+  el("status").textContent = result.card ? "Предыдущая анкета возвращена." : "Этот пропуск больше нельзя вернуть.";
 });
 el("editor").onsubmit = event => {
   event.preventDefault();
   action(async () => {
-    await api("me", "PUT", { name: el("nickname").value.trim(), bio: el("about").value.trim(),
-      game_ids: [...el("choices").querySelectorAll(":checked")].map(input => Number(input.value)),
-      share_username: el("share").checked });
-    await navigate("feed");
-    el("status").textContent = "Анкета сохранена.";
+    const creating = profileMode === "create";
+    const ids = [...el("choices").querySelectorAll(":checked")].map(input => Number(input.value));
+    if (ids.length > 10 || (creating && !ids.length)) throw new Error("Выбери от 1 до 10 игр.");
+    const file = el("avatar-file").files[0];
+    if (file && (file.size > 10 * 1024 * 1024 || !["image/jpeg", "image/png"].includes(file.type))) {
+      throw new Error("Выбери фото JPEG или PNG до 10 МБ.");
+    }
+    await api("me", creating ? "POST" : "PUT", {
+      name: el("nickname").value.trim(), bio: el("about").value.trim(), age: Number(el("age").value),
+      timezone: el("zone").value.trim(), purpose: el("purpose").value, game_ids: ids,
+      share_username: el("share").checked, ...(creating ? {consent: el("consent").checked} : {})
+    });
+    let message = creating ? "Анкета опубликована." : "Анкета сохранена.";
+    if (file) {
+      try { await api("me/photo", "PUT", file); }
+      catch (error) { message += " Фото не изменилось. " + error.message; }
+    }
+    await navigate("profile", false);
+    el("status").textContent = message;
   });
 };
 el("continue").onclick = () => el("mutual").close();
 el("show-matches").onclick = () => { el("mutual").close(); navigate("matches"); };
 el("mutual").addEventListener("close", backButton);
-if (tg?.isVersionAtLeast("6.1")) tg.BackButton.onClick(() => {
-  if (el("mutual").open) el("mutual").close(); else navigate("feed");
-});
+if (tg?.isVersionAtLeast("6.1")) tg.BackButton.onClick(goBack);
 start();

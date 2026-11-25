@@ -443,7 +443,7 @@ async def test_imported_recent_games_are_shown_and_manual_favorites_preserved(se
     await harness.update(1,"/profile")
     text = harness.sent()[-1].text
     assert all(name in text for name in ["Terraria","Deep Rock Galactic","Dota 2"])
-    assert "ELDEN RING" not in text
+    assert "ELDEN RING" in text.split("Выбраны вручную")[1]
     profile = service.profiles.public_profile(service.profiles.user(user.id))
     assert profile["steam_game_count"] == 3
     assert len(profile["games"]) == 3

@@ -32,7 +32,11 @@ def profile_text(profile, *, common_games=()):
         names = [card_game_name(name) for name in profile["games"][:CARD_GAME_LIMIT]]
         sections.append("<b>🎮 Игры</b>\n" + "\n".join(f"• {name}" for name in names))
     if common_games:
+        # Shared games can also be manually selected, so keep their names in one section.
         sections.append("<b>🤝 Общие игры</b>\n" + " · ".join(map(card_game_name, common_games)))
+    extra = [g for g in profile.get("additional_games", []) if g not in common_games]
+    if extra:
+        sections.append("<b>Выбраны вручную</b>\n" + " · ".join(map(card_game_name, extra)))
     bio = profile["bio"]
     if bio:
         sections.append("<b>О себе</b>\n" + escape(bio))

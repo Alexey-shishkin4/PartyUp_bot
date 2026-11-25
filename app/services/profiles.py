@@ -40,11 +40,14 @@ class ProfileService:
         use_default_avatar=False,
         schedule_set=None,
         test_library=(),
+        create_only=False,
     ):
         if photo_file_id is not PHOTO_UNCHANGED:
             self.validate_photo(photo_file_id)
         with self.lock, self.db.session.begin() as session:
             user = session.scalar(select(User).where(User.telegram_id == telegram_id))
+            if create_only and user:
+                raise DomainError("Анкета уже существует. Открой её заново.")
             if user and user.banned:
                 raise DomainError("Анкета заблокирована модератором")
             if user and user.is_test != test_profile:
@@ -195,6 +198,7 @@ class ProfileService:
             "selected_games": [entry.game.name for entry in selected],
             "game_ids": [entry.app_id for entry in selected],
             "games": visible,
+            "additional_games": [e.game.name for e in selected if e not in card_games],
             "games_count": len(visible),
         }
 

@@ -167,30 +167,39 @@ class DiscoveryService:
             )
             session.execute(delete(Event).where(Event.actor_id == user_id, Event.kind.like("test_%")))
 
-    def undo_skip(self, actor_id, *, test_only=False):
+    def _latest_skip(self, session, actor_id, test_only):
         kinds = (
             ("test_like", "test_skip")
             if test_only
             else ("like", "skip", "block", "report", "test_like", "test_skip")
         )
-        with self.lock, self.db.session.begin() as session:
-            latest = session.scalar(
-                select(Event)
-                .where(
-                    Event.actor_id == actor_id,
-                    Event.kind.in_(kinds),
-                    Event.details["gallery"].as_boolean().is_(True)
-                    if test_only
-                    else Event.details["gallery"].as_boolean().is_not(True),
-                )
-                .order_by(Event.id.desc())
-                .limit(1)
+        latest = session.scalar(
+            select(Event)
+            .where(
+                Event.actor_id == actor_id,
+                Event.kind.in_(kinds),
+                Event.details["gallery"].as_boolean().is_(True)
+                if test_only else Event.details["gallery"].as_boolean().is_not(True),
             )
-            if latest and latest.kind in {"skip", "test_skip"}:
-                reaction = session.get(Reaction, (actor_id, latest.target_id))
-                if reaction and reaction.kind == "skip":
-                    session.delete(reaction)
-                    return latest.target_id
+            .order_by(Event.id.desc())
+            .limit(1)
+        )
+        if latest and latest.kind in {"skip", "test_skip"}:
+            reaction = session.get(Reaction, (actor_id, latest.target_id))
+            if reaction and reaction.kind == "skip":
+                return reaction
+        return None
+
+    def can_undo_skip(self, actor_id):
+        with self.db.session() as session:
+            return self._latest_skip(session, actor_id, False) is not None
+
+    def undo_skip(self, actor_id, *, test_only=False):
+        with self.lock, self.db.session.begin() as session:
+            reaction = self._latest_skip(session, actor_id, test_only)
+            if reaction:
+                session.delete(reaction)
+                return reaction.target_id
         return None
 
     def react(self, actor_id: int, target_id: int, kind: str, reason="Другое", *, fresh=False, gallery=False):

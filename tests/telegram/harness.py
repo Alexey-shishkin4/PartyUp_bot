@@ -12,7 +12,7 @@ from aiogram.methods import (
     SendMessage,
     SendPhoto,
 )
-from aiogram.types import CallbackQuery, Chat, ChatFullInfo, FSInputFile, Message, PhotoSize, Update
+from aiogram.types import CallbackQuery, Chat, ChatFullInfo, InputFile, Message, PhotoSize, Update
 from aiogram.types import User as TelegramUser
 
 from app.config import Settings
@@ -43,7 +43,7 @@ class FakeSession(BaseSession):
         if isinstance(method, SendPhoto):
             if self.fail_photos:
                 raise TelegramBadRequest(method=method, message="wrong file identifier")
-            file_id = "uploaded-test-photo" if isinstance(method.photo, FSInputFile) else str(method.photo)
+            file_id = "uploaded-test-photo" if isinstance(method.photo, InputFile) else str(method.photo)
             return Message(
                 message_id=len(self.calls),
                 date=datetime.now(timezone.utc),

@@ -161,6 +161,7 @@ def build_profile_router(profiles, cards, fetch_steam_profile, feed_view):
                     steam_profile=steam_profile,
                     use_default_avatar=data.get("draft_default_avatar", False),
                     schedule_set=schedule_set,
+                    create_only=True,
                 )
             except (ValidationError, DomainError) as error:
                 await message.answer("Не удалось сохранить анкету. " + escape(str(error)[:300]))

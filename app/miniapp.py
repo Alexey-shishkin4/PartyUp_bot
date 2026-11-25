@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 
 from aiogram.exceptions import TelegramAPIError
+from aiogram.types import BufferedInputFile
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
 from pydantic import ValidationError
@@ -12,10 +13,12 @@ from sqlalchemy import select
 
 from .config import RESOURCES, ROOT
 from .domain.errors import DomainError
+from .domain.profiles import ProfileInput
 from .domain.matching import steam_card_game_ids
 from .persistence.models import Event
 from .services.fixture_catalog import fixture_definitions, fixture_photo
 from .telegram.contacts import current_username
+from .telegram.ui import MAX_PHOTO_SIZE
 
 STATIC = ROOT / "static/miniapp"
 DECK = ("mira", "nika", "mark", "asya", "artem", "sonya")
@@ -70,7 +73,7 @@ async def headers(request, handler):
     except DomainError as error:
         response = web.Response(status=409, text=str(error))
     except ValidationError:
-        response = web.Response(status=400, text="Проверь имя, описание и выбранные игры.")
+        response = web.Response(status=400, text="Проверь имя (2–40 символов), возраст (18–99), часовой пояс и игры (до 10).")
     except web.HTTPException as error:
         response = web.Response(status=error.status, text=error.text)
     response.headers.update({
@@ -111,12 +114,12 @@ def create_web_app(services=None, bot=None):
 
     profiles, discovery = services.profiles, services.discovery
 
-    def viewer(request):
+    def viewer(request, *, allow_new=False):
         account = authenticate(request, bot)
         user = profiles.user_by_telegram(account.id)
-        if not user:
+        if not user and not allow_new:
             raise web.HTTPForbidden(text="Сначала создай анкету командой /start в боте.")
-        if user.banned or user.is_test:
+        if user and (user.banned or user.is_test):
             raise web.HTTPForbidden(text="Анкета недоступна.")
         return user, account
 
@@ -131,28 +134,62 @@ def create_web_app(services=None, bot=None):
 
     def card(row):
         return {key: row[key] for key in ("id", "name", "age", "bio", "timezone", "start_hour", "end_hour",
-                                           "schedule_set", "games", "is_test", "has_photo")}
+                                           "schedule_set", "games", "additional_games", "is_test", "has_photo")}
 
     async def me(request):
-        user, _ = viewer(request)
+        user, account = viewer(request, allow_new=True)
+        catalog = [{"id": g.app_id, "name": g.name} for g in profiles.catalog()]
+        if user is None:
+            return web.json_response({"registered": False, "name": account.first_name, "catalog": catalog})
         own = profiles.public_profile(user)
-        return web.json_response({**card(own), "game_ids": own["game_ids"], "active": user.active,
+        return web.json_response({**card(own), "registered": True, "purpose": user.purpose, "purpose_label": own["purpose_label"],
+                                  "game_ids": own["game_ids"], "active": user.active,
                                   "share_username": user.share_username, "steam_connected": own["steam_connected"],
-                                  "catalog": [{"id": g.app_id, "name": g.name} for g in profiles.catalog()]})
+                                  "catalog": catalog})
 
     async def edit(request):
-        user, account = viewer(request)
+        creating = request.method == "POST"
+        user, account = viewer(request, allow_new=creating)
         data = await body(request)
-        if set(data) != {"name", "bio", "game_ids", "share_username"} or type(data["share_username"]) is not bool:
+        base = {"name", "bio", "game_ids", "share_username"}
+        if not base <= data.keys() or type(data["share_username"]) is not bool:
             raise web.HTTPBadRequest(text="Проверь поля анкеты.")
         share = data.pop("share_username")
-        profiles.save_profile(user.telegram_id, None, username=account.username, changes=data, share_username=share)
+        if creating and data.pop("consent", False) is not True:
+            raise web.HTTPBadRequest(text="Подтверди публикацию анкеты.")
+        if data.keys() - {"name", "age", "timezone", "purpose", "bio", "game_ids"}:
+            raise web.HTTPBadRequest(text="Неизвестное поле анкеты.")
+        if creating:
+            profile = ProfileInput.model_validate(data)
+            profiles.save_profile(account.id, profile, username=account.username, share_username=share,
+                                  photo_file_id=None, use_default_avatar=True, schedule_set=False, create_only=True)
+        else:
+            profiles.save_profile(user.telegram_id, None, username=account.username, changes=data, share_username=share)
+        return web.json_response({"saved": True})
+
+    async def update_photo(request):
+        user, _ = viewer(request)
+        if request.method == "DELETE":
+            profiles.set_photo(user.id, None, use_default_avatar=True)
+        else:
+            if request.content_type not in {"image/jpeg", "image/png"}:
+                raise web.HTTPBadRequest(text="Выбери фотографию JPEG или PNG.")
+            upload = await request.clone(client_max_size=MAX_PHOTO_SIZE + 1).read()
+            if not upload or len(upload) > MAX_PHOTO_SIZE:
+                raise web.HTTPBadRequest(text="Можно загрузить фото до 10 МБ.")
+            try:
+                msg = await bot.send_photo(user.telegram_id, BufferedInputFile(upload, filename="avatar"),
+                                           caption="Фото для твоей анкеты PartyUp")
+            except (TelegramAPIError, TimeoutError):
+                raise web.HTTPBadRequest(text="Telegram не принял фото. Проверь доступ бота к чату и формат файла.") from None
+            profiles.set_photo(user.id, msg.photo[-1].file_id)
         return web.json_response({"saved": True})
 
     async def feed(request):
         user, _ = viewer(request)
         rows = discovery.feed(user.id, limit=1)
-        return web.json_response([{**card(r["profile"]), "common_games": r["common_games"]} for r in rows])
+        return web.json_response([{**card(r["profile"]), "common_games": r["common_games"]} for r in rows],
+                                 headers={"X-Can-Undo": "1" if discovery.can_undo_skip(user.id) else "0"})
 
     async def react(request):
         user, _ = viewer(request)
@@ -173,7 +210,9 @@ def create_web_app(services=None, bot=None):
     async def undo(request):
         user, _ = viewer(request)
         target = discovery.undo_skip(user.id)
-        return web.json_response({"undone": target is not None})
+        rows = discovery.feed(user.id, preferred_id=target, limit=1) if target else []
+        restored = {**card(rows[0]["profile"]), "common_games": rows[0]["common_games"]} if rows else None
+        return web.json_response({"undone": target is not None, "card": restored})
 
     async def matches(request):
         user, _ = viewer(request)
@@ -225,7 +264,8 @@ def create_web_app(services=None, bot=None):
         return await avatar(request)
 
     app.add_routes([
-        web.get("/miniapp/api/me", me), web.put("/miniapp/api/me", edit),
+        web.get("/miniapp/api/me", me), web.put("/miniapp/api/me", edit), web.post("/miniapp/api/me", edit),
+        web.put("/miniapp/api/me/photo", update_photo), web.delete("/miniapp/api/me/photo", update_photo),
         web.get("/miniapp/api/feed", feed), web.post("/miniapp/api/react", react),
         web.post("/miniapp/api/undo", undo), web.get("/miniapp/api/matches", matches),
         web.get(r"/miniapp/api/contact/{id:[0-9]{1,10}}", contact),

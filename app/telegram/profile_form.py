@@ -319,6 +319,7 @@ class ProfileForm:
             dota_game_name(app_id, catalog[app_id].name, rank) for app_id in game_ids if app_id in catalog
         ]
         profile = {**draft.model_dump(), "games": games, "purpose_label": PURPOSES[draft.purpose]}
+        profile["additional_games"] = [catalog[i].name for i in sorted(draft.game_ids) if i in catalog and i not in game_ids]
         wanted = {value: label for label, value in FIELD_STEPS["looking_for"][1]}[draft.looking_for]
         language = {value: label for label, value in FIELD_STEPS["language"][1]}[draft.language]
         filters = f"Кого показывать: {wanted.lower()} · {draft.age_min}–{draft.age_max} лет · {language}"

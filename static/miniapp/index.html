@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#101513">
+  <meta name="theme-color" content="#100c19">
   <title>PartyUp · Подбор игроков</title>
   <link rel="icon" href="/miniapp/avatar">
   <link rel="stylesheet" href="/static/miniapp/style.css">
@@ -21,7 +21,8 @@
     <symbol id="time" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></symbol>
   </svg>
   <header class="mast"><div class="mast-inner">
-    <span class="wordmark"><span class="logo"><svg class="icon"><use href="#pad"/></svg></span>partyup<span class="period">.</span></span>
+    <span class="wordmark"><span class="logo"><svg class="icon"><use href="#pad"/></svg></span>Party<span class="period">UP</span></span>
+    <button id="go-back" class="subtle" hidden>← Назад</button>
     <span class="demo">{{mode}}</span>
   </div></header>
   <main>
@@ -41,18 +42,32 @@
           <div class="actions"><button id="pass"><svg class="icon"><use href="#skip"/></svg>Пропустить</button><button id="like" class="primary"><svg class="icon"><use href="#heart"/></svg>Нравится</button></div>
         </div>
       </article>
-      <div id="empty" class="panel" hidden><h2>Пока это все игроки</h2><p>«Назад» вернёт последнюю анкету. Новый просмотр сбросит тестовые лайки и взаимности.</p><button id="again">Начать заново</button></div>
+      <div id="empty" class="panel" hidden><img class="brand-art" src="/static/miniapp/partyup.png" alt=""><div><h2>Пока это все игроки</h2><p>«Назад» вернёт последнюю анкету. Новый просмотр сбросит тестовые лайки и взаимности.</p><button id="again">Начать заново</button></div></div>
     </section>
     <section id="matches" hidden><div class="heading"><h1>Взаимности<span>.</span></h1></div>
       <div class="panel"><p id="match-empty">Здесь появятся игроки, которым ты тоже понравился.</p><ul id="match-list"></ul></div>
     </section>
-    <section id="profile" hidden><div class="heading"><h1>Моя анкета<span>.</span></h1></div>
+    <section id="profile" hidden><div class="heading"><h1><span id="profile-title">Моя анкета</span><span>.</span></h1></div>
+      <article id="own-card" hidden>
+        <div class="portrait"><img id="own-photo" alt="Фото анкеты"><div class="identity"><h2 id="own-name"></h2><span id="own-zone"></span></div></div>
+        <div class="info"><div><h3>Цель знакомства</h3><p id="own-purpose"></p></div>
+          <div><h3>Игры</h3><div id="own-games" class="tags"></div></div>
+          <div><h3>О себе</h3><p id="own-bio"></p></div>
+          <button class="primary" id="edit-profile">Изменить анкету</button></div>
+      </article>
       <form class="panel" id="editor">
         <label>Имя или ник<input id="nickname" required maxlength="40" autocomplete="off"></label>
+        <fieldset id="details" hidden><legend>Об игроке</legend>
+          <label>Возраст<input id="age" type="number" min="18" max="99"></label>
+          <label>Часовой пояс<input id="zone" list="zones" placeholder="Asia/Novosibirsk"><datalist id="zones"></datalist></label>
+          <label>Цель знакомства<select id="purpose"><option value="both">Общение и отношения</option><option value="friends">Друзья и тиммейты</option><option value="romance">Отношения</option></select></label>
+        </fieldset>
         <label>О себе<textarea id="about" rows="3" maxlength="500"></textarea></label>
-        <fieldset><legend>Мои игры</legend><div id="choices" class="tags"></div></fieldset>
+        <fieldset><legend>Мои игры</legend><input id="game-search" type="search" placeholder="Найти игру" aria-label="Найти игру" hidden><div id="choices" class="tags"></div></fieldset>
+        <fieldset id="avatar-tools" hidden><legend>Фото анкеты</legend><label>Заменить фото (JPEG или PNG, до 10 МБ)<input type="file" accept="image/jpeg,image/png" id="avatar-file"></label><small>При сохранении бот отправит фото в твой личный чат.</small></fieldset>
         <label id="sharing" hidden><span><input id="share" type="checkbox"> Показывать мой @username при взаимном лайке</span></label>
-        <p class="hint">Эта анкета хранится только в этом браузере.</p><button class="primary" type="submit">Сохранить анкету</button>
+        <label id="consent-line" hidden><span><input id="consent" type="checkbox"> Мне есть 18 лет. Соглашаюсь на публикацию анкеты и обработку данных для подбора. Подробнее в /privacy.</span></label>
+        <p class="hint">Эта анкета хранится только в этом браузере.</p><button id="save-profile" class="primary" type="submit">Сохранить анкету</button>
       </form>
     </section>
     <p class="status" id="status" role="status"></p>
