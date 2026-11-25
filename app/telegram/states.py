@@ -16,3 +16,8 @@ class Form(StatesGroup):
 
 class FortniteForm(StatesGroup):
     nickname = State()
+
+
+class RiotForm(StatesGroup):
+    valorant = State()
+    league = State()

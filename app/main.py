@@ -9,6 +9,7 @@ from aiogram.utils.token import TokenValidationError, validate_token
 from app.config import Settings
 from app.integrations.fortnite import FortniteClient
 from app.integrations.opendota import OpenDotaClient
+from app.integrations.riot import RiotClient
 from app.integrations.steam import SteamClient
 from app.integrations.steam_public import PublicSteamParser
 from app.persistence.database import Database
@@ -47,7 +48,13 @@ async def run(settings: Settings):
                 fortnite_api_key=settings.fortnite_api_key.get_secret_value(),
                 daily_limit=settings.api_fortnite_daily_limit,
             )
-            bot, dispatcher = build_bot(services, settings, fetch_steam_profile, fortnite.fetch)
+            riot = RiotClient(
+                client,
+                ugi_key=settings.ugi_api_key.get_secret_value(),
+                henrik_key=settings.henrikdev_api_key.get_secret_value(),
+                riot_key=settings.riot_api_key.get_secret_value(),
+            )
+            bot, dispatcher = build_bot(services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch)
             try:
                 me = await bot.me()
                 log.info("PartyUp запущен как @%s", me.username)
