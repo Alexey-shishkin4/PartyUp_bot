@@ -62,22 +62,49 @@ async function loadPhoto(img, card, version) {
     photos.delete(img);
   }
   const portrait = img.closest(".portrait");
+  const retry = portrait.querySelector(".retry-photo");
+  retry.hidden = true;
+  retry.onclick = () => loadPhoto(img, card, version);
   img.hidden = true;
   img.removeAttribute("src");
   portrait.setAttribute("aria-busy", String(card.has_photo));
-  let src = "/miniapp/avatar";
+  let photoFailed = false;
   if (card.has_photo) {
     try {
       const image = await api("photo/" + card.id);
       if (version !== viewVersion) return;
-      src = URL.createObjectURL(image);
-      photos.set(img, src);
+      const src = URL.createObjectURL(image);
+      try {
+        img.src = src;
+        await img.decode();
+        if (version !== viewVersion) {
+          URL.revokeObjectURL(src);
+          return;
+        }
+        photos.set(img, src);
+      } catch (error) {
+        URL.revokeObjectURL(src);
+        throw error;
+      }
     } catch {
       if (version !== viewVersion) return;
+      photoFailed = true;
     }
   }
-  img.src = src;
-  img.hidden = false;
+  if (version !== viewVersion) return;
+  if (photoFailed) img.removeAttribute("src");
+  if (!card.has_photo) {
+    img.src = "/miniapp/avatar";
+    try {
+      await img.decode();
+    } catch {
+      if (version !== viewVersion) return;
+      img.removeAttribute("src");
+    }
+  }
+  if (version !== viewVersion) return;
+  img.hidden = !img.hasAttribute("src");
+  retry.hidden = !photoFailed;
   portrait.setAttribute("aria-busy", "false");
 }
 

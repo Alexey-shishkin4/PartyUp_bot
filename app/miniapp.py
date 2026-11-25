@@ -11,7 +11,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BufferedInputFile
 from aiogram.utils.web_app import safe_parse_webapp_init_data
 from aiohttp import web
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageOps
 from pydantic import ValidationError
 from sqlalchemy import select
 
@@ -295,15 +295,17 @@ def create_web_app(services=None, bot=None):
                 result = await wait_for(bot.download(file_id, timeout=8), timeout=8)
                 if result is not None:
                     image = await to_thread(thumbnail, result.read())
-                    if allowed() and profiles.photo_file(target_id) == file_id:
-                        if len(image) <= 256 * 1024:
-                            photo_cache[file_id] = image
-                            photo_cache.move_to_end(file_id)
-                            if len(photo_cache) > 32:
-                                photo_cache.popitem(last=False)
-                        return web.Response(body=image, content_type="image/webp")
-            except (TelegramAPIError, TimeoutError, UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError):
+                    if not allowed() or profiles.photo_file(target_id) != file_id:
+                        raise web.HTTPNotFound()
+                    if len(image) <= 256 * 1024:
+                        photo_cache[file_id] = image
+                        photo_cache.move_to_end(file_id)
+                        if len(photo_cache) > 32:
+                            photo_cache.popitem(last=False)
+                    return web.Response(body=image, content_type="image/webp")
+            except (TelegramAPIError, TimeoutError, Image.DecompressionBombError, OSError, ValueError):
                 pass
+            raise web.HTTPServiceUnavailable(text="Фото пока недоступно.")
         return await avatar(request)
 
     app.add_routes([

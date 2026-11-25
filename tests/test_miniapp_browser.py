@@ -5,6 +5,7 @@ from asyncio import Event
 from aiohttp.test_utils import TestServer
 from playwright.async_api import async_playwright, expect
 
+from app.config import ROOT
 from app.miniapp import create_web_app
 from tests.telegram.harness import Harness
 from tests.test_miniapp import signed
@@ -30,12 +31,20 @@ async def test_mobile_and_desktop_miniapp(service, users):
             errors = []
             requests = []
             finish_photo = Event()
+            photo_responses = iter([
+                {"status": 502, "body": "Bad Gateway"},
+                {"status": 200, "body": "not an image", "content_type": "image/webp"},
+            ])
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on("request", lambda request: requests.append(request.url))
 
             async def slow_photo(route):
                 await finish_photo.wait()
-                await route.fulfill(status=503, body="Unavailable")
+                response = next(photo_responses, None)
+                if response:
+                    await route.fulfill(**response)
+                else:
+                    await route.fulfill(path=ROOT / "static/miniapp/avatar.webp", content_type="image/webp")
 
             await page.route(f"**/miniapp/api/photo/{a.id}", slow_photo)
             await page.route("https://telegram.org/js/telegram-web-app.js",
@@ -51,7 +60,15 @@ async def test_mobile_and_desktop_miniapp(service, users):
             await expect(page.locator("#own-card .portrait")).to_have_attribute("aria-busy", "true")
             await expect(page.locator("#edit-profile")).to_be_enabled()
             finish_photo.set()
-            await expect(page.locator("#own-photo")).to_have_attribute("src", "/miniapp/avatar")
+            retry_photo = page.locator("#own-card .retry-photo")
+            await expect(retry_photo).to_be_visible()
+            await expect(page.locator("#own-photo")).to_be_hidden()
+            await retry_photo.click()
+            await expect(retry_photo).to_be_visible()
+            await expect(page.locator("#own-photo")).to_be_hidden()
+            await retry_photo.click()
+            await expect(page.locator("#own-photo")).to_be_visible()
+            assert await page.locator("#own-photo").evaluate("(img) => img.naturalWidth > 0")
             await page.locator("#edit-profile").click()
             await page.locator("#nickname").fill("Мобильный игрок")
             await page.locator("#share").check()

@@ -31,7 +31,9 @@
       <div id="loading" class="panel"><span class="spinner" id="startup-spinner" aria-hidden="true"></span><p role="status">Открываем PartyUp…</p><button id="retry" hidden>Повторить</button><a href="/miniapp/demo" id="preview" hidden>Открыть демо</a></div>
       <article id="player" hidden>
         <div class="portrait">
+          <svg class="portrait-fallback" aria-hidden="true"><use href="#person"/></svg>
           <img id="photo" alt="">
+          <button type="button" class="retry-photo" hidden>Повторить загрузку фото</button>
           <span class="counter" id="position"></span>
           <div class="identity"><h2 id="name"></h2><span class="clock"><svg class="icon"><use href="#time"/></svg><span id="schedule"></span></span></div>
         </div>
@@ -49,7 +51,12 @@
     </section>
     <section id="profile" hidden><div class="heading"><h1><span id="profile-title">Моя анкета</span><span>.</span></h1></div>
       <article id="own-card" hidden>
-        <div class="portrait"><img id="own-photo" alt="Фото анкеты"><div class="identity"><h2 id="own-name"></h2><span id="own-zone"></span></div></div>
+        <div class="portrait">
+          <svg class="portrait-fallback" aria-hidden="true"><use href="#person"/></svg>
+          <img id="own-photo" alt="Фото анкеты">
+          <button type="button" class="retry-photo" hidden>Повторить загрузку фото</button>
+          <div class="identity"><h2 id="own-name"></h2><span id="own-zone"></span></div>
+        </div>
         <div class="info"><div><h3>Цель знакомства</h3><p id="own-purpose"></p></div>
           <div><h3>Игры</h3><div id="own-games" class="tags"></div></div>
           <div><h3>О себе</h3><p id="own-bio"></p></div>

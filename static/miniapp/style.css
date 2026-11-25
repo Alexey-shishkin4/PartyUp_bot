@@ -42,6 +42,9 @@ h1 { font-size: clamp(34px, 5vw, 54px); }
 #player, #own-card { display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; }
 .portrait { position: relative; isolation: isolate; min-height: 390px; background: radial-gradient(ellipse at top right, #44314d, #201829 65%); }
 .portrait img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 38%; }
+.portrait-fallback { position: absolute; top: 37%; left: 50%; width: 52px; height: 52px; transform: translate(-50%, -50%); fill: none; stroke: var(--muted); stroke-width: 1.2; }
+.portrait[aria-busy="true"] .portrait-fallback { display: none; }
+.retry-photo { position: absolute; z-index: 2; right: 10px; top: 10px; max-width: 74%; font-size: 12px; }
 .portrait::after { content: ""; position: absolute; inset: 0; z-index: 1; background: linear-gradient(0deg, #08100df5 0%, #08100d80 23%, transparent 55%); pointer-events: none; }
 .counter, .identity { position: absolute; z-index: 2; }
 .counter { top: 18px; left: 18px; border-radius: 20px; background: #101513dd; color: white; padding: 7px 12px; }
