@@ -54,6 +54,9 @@ h3, legend { font-size: 13px; font-weight: 650; color: var(--muted); margin-bott
 .actions { flex-wrap: nowrap; margin-top: auto; padding-top: 5px; }
 .actions button { justify-content: center; gap: 7px; flex: 1; }
 .primary { background: var(--mint); color: #172211; border-color: var(--mint); }
+a { color: var(--mint); }
+#share { width: auto; }
+#match-list li { flex-wrap: wrap; }
 .panel, dialog { background: var(--surface); border: 1px solid var(--line); padding: 26px; border-radius: 20px; }
 .panel h2, dialog h2 { margin-bottom: 12px; }
 .panel p + button { margin-top: 16px; }

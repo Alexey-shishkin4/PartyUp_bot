@@ -1,14 +1,32 @@
 services:
+  db:
+    image: postgres:18
+    environment: &postgres-environment
+      POSTGRES_DB: ${POSTGRES_DB:-partyup}
+      POSTGRES_USER: ${POSTGRES_USER:-partyup}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Укажите POSTGRES_PASSWORD в .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
   partyup:
     build: .
+    ports:
+      - "127.0.0.1:${MINIAPP_PORT:-8766}:${MINIAPP_PORT:-8766}"
     env_file: .env
     environment:
-      HOST: 0.0.0.0
-      PORT: 8765
-    ports:
-      - "127.0.0.1:8765:8765"
-    volumes:
-      - partyup-data:/app/data
+      <<: *postgres-environment
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 volumes:
-  partyup-data:
+  postgres-data:

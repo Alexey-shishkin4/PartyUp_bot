@@ -1,15 +1,16 @@
-FROM python:3.10-slim
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOST=0.0.0.0 PORT=8765
+FROM python:3.12-slim AS build
+RUN python -m pip install --no-cache-dir --only-binary=:all: uv==0.11.3
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && useradd --create-home appuser
-COPY --chown=appuser:appuser app ./app
-COPY --chown=appuser:appuser data/catalog.json data/affinity.json data/model_report.json ./data/
-COPY --chown=appuser:appuser data/test_profiles.json ./data/
-COPY --chown=appuser:appuser data/test_profiles ./data/test_profiles
-COPY --chown=appuser:appuser static ./static
-COPY --chown=appuser:appuser licenses ./licenses
-RUN chown -R appuser:appuser /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project --no-python-downloads
+
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+RUN useradd --create-home appuser
+COPY --from=build /app/.venv /app/.venv
+COPY app ./app
+COPY static/miniapp ./static/miniapp
+COPY licenses ./licenses
 USER appuser
-EXPOSE 8765
-CMD ["python", "-m", "app.main"]
+CMD ["/app/.venv/bin/python", "-m", "app"]

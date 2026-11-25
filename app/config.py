@@ -1,61 +1,71 @@
 from pathlib import Path
-from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 ROOT = Path(__file__).resolve().parent.parent
+RESOURCES = ROOT / "app" / "resources"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ROOT / ".env", env_file_encoding="utf-8", extra="ignore")
+
     bot_token: str = ""
-    force_demo: bool = False
+    miniapp_url: str = ""
+    miniapp_port: int = Field(default=8766, ge=1, le=65535)
+
+    @field_validator("miniapp_url")
+    @classmethod
+    def valid_miniapp_url(cls, value):
+        value = value.strip().rstrip("/")
+        if value:
+            url = urlsplit(value)
+            if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
+                raise ValueError("MINIAPP_URL должен быть публичным HTTPS-адресом Mini App")
+        return value
     steam_api_key: str = ""
-    steam_mode: Literal["link", "openid"] = "link"
-    public_url: str = "http://127.0.0.1:8765"
+    api_fortnite_key: SecretStr = SecretStr("")
+    api_fortnite_daily_limit: int = Field(default=10_000, ge=1)
+    fortnite_api_key: SecretStr = SecretStr("")
     admin_ids: str = ""
     developer_ids: str = ""
+    enable_test_profiles: bool = False
     data_location: str = "локальный компьютер владельца"
     operator_contact: str = "администратор бота"
-    database_url: str = ""
-    host: str = "127.0.0.1"
-    port: int = Field(default=8765, ge=1, le=65535)
+    postgres_host: str = "db"
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_db: str = "partyup"
+    postgres_user: str = "partyup"
+    postgres_password: SecretStr = SecretStr("")
 
-    @field_validator("admin_ids","developer_ids")
+    @field_validator("admin_ids", "developer_ids")
     @classmethod
-    def valid_operator_ids(cls,value):
+    def valid_operator_ids(cls, value):
         try:
-            identifiers={int(part.strip()) for part in value.split(",") if part.strip()}
+            identifiers = {int(part.strip()) for part in value.split(",") if part.strip()}
         except ValueError:
             raise ValueError("Права задаются числовыми Telegram ID через запятую") from None
-        if any(identifier<=0 or identifier>=2**63 for identifier in identifiers):
+        if any(identifier <= 0 or identifier >= 2**63 for identifier in identifiers):
             raise ValueError("Telegram ID оператора должен быть положительным числом")
         return ",".join(str(identifier) for identifier in sorted(identifiers))
 
-    @model_validator(mode="after")
-    def validate_url(self):
-        self.public_url = self.public_url.rstrip("/")
-        if self.steam_mode == "openid" and not self.public_url.startswith("https://"):
-            raise ValueError("Для Steam OpenID укажите PUBLIC_URL с HTTPS в .env")
-        return self
-
-    @property
-    def demo(self) -> bool:
-        return self.force_demo or not bool(self.bot_token)
-
     @property
     def admins(self) -> set[int]:
-        return {int(value.strip()) for value in self.admin_ids.split(",") if value.strip()}
+        return {int(value) for value in self.admin_ids.split(",") if value}
 
     @property
     def developers(self) -> set[int]:
-        return {int(value.strip()) for value in self.developer_ids.split(",") if value.strip()} | self.admins
+        return {int(value) for value in self.developer_ids.split(",") if value} | self.admins
 
     @property
-    def db_url(self) -> str:
-        if self.database_url:
-            return self.database_url
-        directory = ROOT / "data"
-        directory.mkdir(exist_ok=True)
-        return "sqlite:///" + (directory / ("demo.sqlite3" if self.demo else "bot.sqlite3")).as_posix()
+    def db_url(self) -> URL:
+        return URL.create(
+            "postgresql+psycopg",
+            username=self.postgres_user,
+            password=self.postgres_password.get_secret_value(),
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        )

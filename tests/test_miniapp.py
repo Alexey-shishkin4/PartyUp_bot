@@ -1,0 +1,140 @@
+import hashlib
+import hmac
+import json
+import time
+from io import BytesIO
+from urllib.parse import urlencode
+
+import pytest
+from aiohttp.test_utils import TestClient, TestServer
+from sqlalchemy import func, select
+
+from app.miniapp import create_web_app
+from app.miniapp import miniapp_server
+from app.persistence.models import Match
+from tests.telegram.harness import Harness, register
+
+
+def signed(token, user_id, age=0):
+    fields = {"auth_date": str(int(time.time()) - age),
+              "user": json.dumps({"id": user_id, "first_name": "Игрок", "username": f"player{user_id}"})}
+    payload = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    key = hmac.digest(b"WebAppData", token.encode(), "sha256")
+    fields["hash"] = hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+    return {"Authorization": "tma " + urlencode(fields)}
+
+
+@pytest.fixture
+async def web_bot(service):
+    harness = Harness(service)
+    async with TestClient(TestServer(create_web_app(service, harness.bot))) as client:
+        yield client, harness
+    await harness.bot.session.close()
+
+
+async def test_demo_and_auth(web_bot, users):
+    client, h = web_bot
+    users(11)
+    for path, script in (("/miniapp", "live.js"), ("/miniapp/demo", "app.js")):
+        page = await client.get(path)
+        assert page.status == 200 and script in await page.text()
+    deck = await (await client.get("/miniapp/deck")).json()
+    assert len(deck) == 6 and (await client.get(deck[0]["photo"])).status == 200
+    for headers in ({}, signed("anotherKey", 11), signed(h.bot.token, 11, 3700), signed(h.bot.token, 11, -60)):
+        assert (await client.get("/miniapp/api/me", headers=headers)).status == 401
+    assert (await client.get("/miniapp/api/me", headers=signed(h.bot.token, 12))).status == 403
+    await h.update(11, "/miniapp")
+    assert "/find" in h.sent()[-1].text
+    h.settings.miniapp_url = "https://party.example/miniapp"
+    await h.update(11, "/miniapp")
+    assert h.sent()[-1].reply_markup.inline_keyboard[0][0].web_app.url == h.settings.miniapp_url
+
+
+@pytest.mark.parametrize("web_first", [True, False])
+async def test_cross_surface_match(web_bot, service, web_first):
+    client, h = web_bot
+    await register(h, telegram=101)
+    await register(h, telegram=202)
+    a = service.profiles.user_by_telegram(101)
+    b = service.profiles.user_by_telegram(202)
+    auth = signed(h.bot.token, 101)
+    h.session.usernames = {101: "current101", 202: "current202"}
+    path = "/miniapp/api/"
+    profile = await (await client.get(path + "me", headers=auth)).json()
+    assert profile["name"] == a.name and profile["game_ids"] == [105600]
+    edit = {"name": "Игрок Mini App", "bio": "Хочу в пати", "share_username": True, "game_ids": [105600]}
+    assert (await client.put(path + "me", headers=auth, json=edit)).status == 200
+    await h.update(101, "/profile")
+    assert edit["name"] in h.photos_sent()[-1].caption
+
+    feed = await (await client.get(path + "feed", headers=auth)).json()
+    assert feed[0]["id"] == b.id and "username" not in feed[0]
+    await h.update(202, "/find")
+    reaction = {"target": b.id, "kind": "like"}
+    if not web_first:
+        await h.update(202, callback=f"react:like:{a.id}", username="current202")
+    result = await client.post(path + "react", json=reaction, headers=auth)
+    assert await result.json() == {"matched": not web_first}
+    if web_first:
+        assert await (await client.get(path + "matches", headers=auth)).json() == []
+        await h.update(202, callback=f"react:like:{a.id}", username="current202")
+    assert (await client.post(path + "react", json=reaction, headers=auth)).status == 409
+    with service.db.session() as session:
+        assert session.scalar(select(func.count()).select_from(Match)) == 1
+    matches = await (await client.get(path + "matches", headers=auth)).json()
+    contact = path + f"contact/{matches[0]['id']}"
+    assert await (await client.get(contact, headers=auth)).json() == {"username": "current202"}
+    await h.update(202, "/matches", username="current202")
+    assert any("@current101" in (msg.caption or "") for msg in h.photos_sent())
+    h.session.usernames[202] = None
+    assert await (await client.get(contact, headers=auth)).json() == {"username": None}
+    service.profiles.update_telegram_account(202, "private", share_username=False)
+    assert (await client.get(contact, headers=auth)).status == 409
+    service.discovery.react(b.id, a.id, "block")
+    assert (await client.get(contact, headers=auth)).status == 409
+    assert await (await client.get(path + "matches", headers=auth)).json() == []
+
+
+async def test_skip_undo_consent_and_private_photo(web_bot, service, users):
+    client, h = web_bot
+    a, b = users(301), users(302)
+    auth = signed(h.bot.token, 301)
+    path = "/miniapp/api/"
+    assert (await client.get(path + f"photo/{b.id}", headers=auth)).status == 404
+    assert (await client.post(path + "react", json={"target": b.id, "kind": "skip"}, headers=auth)).status == 409
+    assert (await client.get(path + "feed", headers=auth)).status == 200
+    assert (await client.post(path + "react", json={"target": b.id, "kind": "like"}, headers=auth)).status == 409
+    assert (await client.post(path + "react", json={"target": b.id, "kind": "skip"}, headers=auth)).status == 200
+    photo = path + f"photo/{b.id}"
+    assert (await client.get(photo, headers=auth)).status == 404
+    assert await (await client.post(path + "undo", headers=auth)).json() == {"undone": True}
+    assert (await client.get(photo, headers=auth)).content_type == "image/png"
+    service.discovery.react(a.id, b.id, "block")
+    assert (await client.get(photo, headers=auth)).status == 404
+
+
+async def test_configured_http_server_and_uploaded_photo(service, users, unused_tcp_port, monkeypatch):
+    from aiohttp import ClientSession
+
+    h = Harness(service)
+    users(801)
+    peer = users(802)
+    service.profiles.set_photo(peer.id, "uploaded-photo")
+
+    async def download(bot, file_id, *, timeout):
+        assert file_id == "uploaded-photo"
+        return BytesIO(b"test-photo-bytes")
+
+    monkeypatch.setattr(type(h.bot), "download", download)
+    h.settings.miniapp_url = "https://party.example/miniapp"
+    h.settings.miniapp_port = unused_tcp_port
+    url = f"http://127.0.0.1:{unused_tcp_port}/miniapp/api"
+    auth = signed(h.bot.token, 801)
+    async with miniapp_server(h.settings, service, h.bot), ClientSession(headers=auth) as client:
+        async with client.get(url + "/feed") as response:
+            assert (await response.json())[0]["has_photo"]
+        async with client.get(f"{url}/photo/{peer.id}") as response:
+            assert response.content_type == "image/jpeg"
+            assert await response.read() == b"test-photo-bytes"
+            assert response.headers["Cache-Control"] == "no-store"
+    await h.bot.session.close()
