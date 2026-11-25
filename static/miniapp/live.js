@@ -12,6 +12,7 @@ let ownProfile;
 let ownProfileAt = 0;
 const photos = new WeakMap();
 let viewVersion = 0;
+let onContactConsent;
 
 function node(tag, text, cls) {
   const out = document.createElement(tag);
@@ -36,7 +37,7 @@ async function api(path, method = "GET", data) {
 }
 
 function backButton() {
-  const inner = trail.length > 0 || profileMode === "edit" || el("mutual").open;
+  const inner = trail.length > 0 || profileMode === "edit" || el("mutual").open || el("contact-consent").open;
   el("go-back").textContent = inner ? "← Назад" : "← В чат";
   if (tg?.isVersionAtLeast("6.1")) {
     if (inner) tg.BackButton.show(); else tg.BackButton.hide();
@@ -45,7 +46,8 @@ function backButton() {
 
 function goBack() {
   if (busy) return;
-  if (el("mutual").open) el("mutual").close();
+  if (el("contact-consent").open) el("contact-consent").close();
+  else if (el("mutual").open) el("mutual").close();
   else if (tab === "profile" && profileMode === "edit") navigate("profile", false);
   else if (trail.length) navigate(trail.pop(), false);
   else tg?.close();
@@ -121,6 +123,7 @@ async function loadFeed(version, restored, initial) {
   el("name").textContent = card.name + ", " + card.age;
   el("bio").textContent = card.bio || "Описание пока не заполнено.";
   el("position").hidden = !card.is_test;
+  el("like-contact-note").hidden = card.is_test;
   el("position").textContent = "Тестовая анкета";
   const hour = n => String(n % 24).padStart(2, "0") + ":00";
   el("schedule").textContent = card.timezone + (card.schedule_set ?
@@ -131,30 +134,41 @@ async function loadFeed(version, restored, initial) {
   void loadPhoto(el("photo"), card, version);
 }
 
+async function showContact(slot, id) {
+  slot.textContent = "Загружаем контакт…";
+  try {
+    const { username } = await api("contact/" + id);
+    if (!username) { slot.textContent = "У игрока пока нет @username."; return; }
+    const link = node("a", "@" + username);
+    link.href = "https://t.me/" + username;
+    link.onclick = event => { event.preventDefault(); tg.openTelegramLink(link.href); };
+    slot.replaceChildren(link);
+  } catch (error) {
+    const retry = node("button", "Обновить контакт");
+    retry.onclick = () => showContact(slot, id);
+    slot.replaceChildren(node("small", error.message), retry);
+  }
+}
+
 async function loadMatches(version) {
   el("match-list").replaceChildren();
   el("match-empty").hidden = true;
   const matches = await api("matches");
   if (version !== viewVersion) return;
   el("match-empty").hidden = matches.length > 0;
-  for (const match of matches) {
+  el("review-contacts").hidden = ownProfile.share_username || matches.length === 0;
+  const pending = matches.map(match => {
     const li = node("li", "");
-    const contact = node("button", "Показать контакт");
-    contact.onclick = async () => {
-      contact.disabled = true;
-      try {
-        const { username } = await api("contact/" + match.id);
-        if (username) {
-          const link = node("a", "@" + username);
-          link.href = "https://t.me/" + username;
-          link.onclick = event => { event.preventDefault(); tg.openTelegramLink(link.href); };
-          contact.replaceWith(link);
-        } else contact.replaceWith(node("small", "У игрока пока нет @username."));
-      } catch (e) { el("status").textContent = e.message; contact.disabled = false; }
-    };
+    const contact = node("div", "Загружаем контакт…");
     li.append(node("strong", match.profile.name + ", " + match.profile.age), contact);
     el("match-list").append(li);
+    return () => showContact(contact, match.id);
+  });
+  async function nextContacts() {
+    while (version === viewVersion && pending.length) await pending.shift()();
   }
+  const workerCount = Math.min(4, pending.length);
+  for (let i = 0; i < workerCount; i++) void nextContacts();
 }
 
 function editor(profile) {
@@ -173,7 +187,6 @@ function editor(profile) {
   el("purpose").value = profile.purpose || "both";
   el("nickname").value = profile.name;
   el("about").value = profile.bio || "";
-  el("share").checked = profile.share_username;
   el("choices").replaceChildren(...profile.catalog.map(game => {
     const label = node("label", "", "choice");
     const check = document.createElement("input");
@@ -241,15 +254,28 @@ async function action(task) {
   finally { busy = false; controls.forEach(button => { button.disabled = false; }); }
 }
 
+function confirmContacts(next) {
+  onContactConsent = next;
+  el("contact-consent").showModal();
+  backButton();
+}
+
 function react(kind) {
+  if (kind === "like" && current && !current.is_test && !ownProfile.share_username) {
+    confirmContacts(() => react(kind));
+    return;
+  }
   return action(async () => {
     if (!current) return;
-    const { matched } = await api("react", "POST", { target: current.id, kind });
+    const { matched, match_id } = await api("react", "POST", { target: current.id, kind });
     const name = current.name;
     await navigate("feed");
     if (matched) {
       el("match-message").textContent = "У вас с игроком «" + name + "» взаимная симпатия.";
       el("mutual").showModal();
+      const slot = node("div", "");
+      el("mutual-contact").replaceChildren(slot);
+      void showContact(slot, match_id);
       backButton();
     }
   });
@@ -299,7 +325,21 @@ el("game-search").oninput = event => {
   const query = event.target.value.trim().toLowerCase();
   for (const label of el("choices").children) label.hidden = !label.textContent.toLowerCase().includes(query);
 };
-el("sharing").hidden = false;
+el("review-contacts").onclick = () => confirmContacts(() => navigate("matches", false));
+el("cancel-contacts").onclick = () => el("contact-consent").close();
+el("contact-consent").addEventListener("close", backButton);
+el("accept-contacts").onclick = async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await api("contact-consent", "POST");
+    ownProfile.share_username = true;
+    el("contact-consent").close();
+    onContactConsent();
+  } catch (error) {
+    el("contact-consent").querySelector("p").textContent = error.message;
+  } finally { button.disabled = false; }
+};
 tabs.forEach(button => { button.onclick = () => navigate(button.dataset.tab); });
 el("retry").onclick = start;
 el("again").onclick = () => navigate("feed");
@@ -324,7 +364,7 @@ el("editor").onsubmit = event => {
     await api("me", creating ? "POST" : "PUT", {
       name: el("nickname").value.trim(), bio: el("about").value.trim(), age: Number(el("age").value),
       timezone: el("zone").value.trim(), purpose: el("purpose").value, game_ids: ids,
-      share_username: el("share").checked, ...(creating ? {consent: el("consent").checked} : {})
+      ...(creating ? {consent: el("consent").checked} : {})
     });
     let message = creating ? "Анкета опубликована." : "Анкета сохранена.";
     if (file) {

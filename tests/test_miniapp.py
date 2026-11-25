@@ -77,7 +77,9 @@ async def test_cross_surface_match(web_bot, service, web_first):
     if not web_first:
         await h.update(202, callback=f"react:like:{a.id}", username="current202")
     result = await client.post(path + "react", json=reaction, headers=auth)
-    assert await result.json() == {"matched": not web_first}
+    payload = await result.json()
+    assert payload["matched"] == (not web_first)
+    assert ("match_id" in payload) == (not web_first)
     if web_first:
         assert await (await client.get(path + "matches", headers=auth)).json() == []
         await h.update(202, callback=f"react:like:{a.id}", username="current202")
@@ -123,7 +125,7 @@ async def test_registration_consent_duplicate_and_photo(web_bot, service):
     path = "/miniapp/api/me"
     auth = signed(h.bot.token, 66)
     data = {"name": "Первый вход", "age": 21, "timezone": "Europe/Moscow", "purpose": "friends",
-            "bio": "", "game_ids": [1245620], "share_username": False}
+            "bio": "", "game_ids": [1245620]}
     assert (await client.post(path, json=data, headers=auth)).status == 400
     data["consent"] = True
     assert (await client.post(path, json={**data, "age": 17}, headers=auth)).status == 400
@@ -131,7 +133,7 @@ async def test_registration_consent_duplicate_and_photo(web_bot, service):
     assert (await client.post(path, json=data, headers=auth)).status == 200
     assert (await client.post(path, json={**data, "name": "Дубликат"}, headers=auth)).status == 409
     user = service.profiles.user_by_telegram(66)
-    assert user.name == data["name"] and user.use_default_avatar and not user.share_username
+    assert user.name == data["name"] and user.use_default_avatar and user.share_username
     assert (await client.put(path + "/photo", data=b"bytes", headers=auth)).status == 400
     assert (await client.put(path + "/photo", data=b"photo", headers={**auth, "Content-Type": "image/jpeg"})).status == 200
     assert service.profiles.photo_file(user.id) and h.photos_sent()[-1].chat_id == 66

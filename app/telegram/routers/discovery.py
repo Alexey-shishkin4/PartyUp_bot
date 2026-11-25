@@ -12,7 +12,7 @@ from app.services.fixture_catalog import fixture_definitions
 from app.telegram.cards import profile_text
 from app.telegram.contacts import current_username as resolve_username
 from app.telegram.states import Form
-from app.telegram.ui import CONTACT_NOTICE, buttons, clear_buttons, menu, require_profile
+from app.telegram.ui import CONTACT_NOTICE, USERNAME_REQUIRED, buttons, clear_buttons, menu, require_profile
 
 log = logging.getLogger(__name__)
 
@@ -273,6 +273,9 @@ def build_discovery_router(profiles, discovery, cards, feed_view):
         peer = profiles.user(int(target))
         if not peer or (origin == "testreact" and not peer.is_test):
             await callback.message.answer("Анкета больше недоступна.")
+            return
+        if kind == "like" and not peer.is_test and not user.username:
+            await message.answer(USERNAME_REQUIRED)
             return
         if kind == "like" and not peer.is_test and not user.share_username:
             await callback.message.answer(

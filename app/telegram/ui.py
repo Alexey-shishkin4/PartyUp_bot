@@ -2,6 +2,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 CONTACT_NOTICE = "При взаимном лайке бот покажет собеседнику твой Telegram @username."
+USERNAME_REQUIRED = "Добавь @username в настройках Telegram и открой PartyUp заново, чтобы поставить лайк."
 MAX_PHOTO_SIZE = 10 * 1024 * 1024
 
 

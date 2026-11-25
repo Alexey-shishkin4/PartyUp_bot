@@ -42,12 +42,13 @@
           <div><h3>Основные игры</h3><div id="games" class="tags"></div></div>
           <div><h3>О себе</h3><p id="bio"></p></div>
           <div class="actions"><button id="pass"><svg class="icon"><use href="#skip"/></svg>Пропустить</button><button id="like" class="primary"><svg class="icon"><use href="#heart"/></svg>Нравится</button></div>
+          <small class="hint" id="like-contact-note" hidden>При взаимном лайке вы увидите @username друг друга.</small>
         </div>
       </article>
       <div id="empty" class="panel" hidden><img class="brand-art" src="/miniapp/art" loading="lazy" alt=""><div><h2>Пока это все игроки</h2><p>«Назад» вернёт последнюю анкету. Новый просмотр сбросит тестовые лайки и взаимности.</p><button id="again">Начать заново</button></div></div>
     </section>
     <section id="matches" hidden><div class="heading"><h1>Взаимности<span>.</span></h1></div>
-      <div class="panel"><p id="match-empty">Здесь появятся игроки, которым ты тоже понравился.</p><ul id="match-list"></ul></div>
+      <div class="panel"><p id="match-empty">Здесь появятся игроки, которым ты тоже понравился.</p><button id="review-contacts" hidden>Подтвердить обмен контактами</button><ul id="match-list"></ul></div>
     </section>
     <section id="profile" hidden><div class="heading"><h1><span id="profile-title">Моя анкета</span><span>.</span></h1></div>
       <article id="own-card" hidden>
@@ -72,8 +73,7 @@
         <label>О себе<textarea id="about" rows="3" maxlength="500"></textarea></label>
         <fieldset><legend>Мои игры</legend><input id="game-search" type="search" placeholder="Найти игру" aria-label="Найти игру" hidden><div id="choices" class="tags"></div></fieldset>
         <fieldset id="avatar-tools" hidden><legend>Фото анкеты</legend><label>Заменить фото (JPEG или PNG, до 10 МБ)<input type="file" accept="image/jpeg,image/png" id="avatar-file"></label><small>При сохранении бот отправит фото в твой личный чат.</small></fieldset>
-        <label id="sharing" hidden><span><input id="share" type="checkbox"> Показывать мой @username при взаимном лайке</span></label>
-        <label id="consent-line" hidden><span><input id="consent" type="checkbox"> Мне есть 18 лет. Соглашаюсь на публикацию анкеты и обработку данных для подбора. Подробнее в /privacy.</span></label>
+        <label id="consent-line" hidden><span><input id="consent" type="checkbox"> Мне есть 18 лет. Соглашаюсь на публикацию анкеты, обработку данных для подбора и показ моего @username при взаимном лайке. Подробнее в /privacy.</span></label>
         <p class="hint">Эта анкета хранится только в этом браузере.</p><button id="save-profile" class="primary" type="submit">Сохранить анкету</button>
       </form>
     </section>
@@ -86,7 +86,13 @@
     <button data-tab="profile"><svg class="icon"><use href="#person"/></svg>Анкета</button>
   </div></nav>
   <dialog id="mutual" aria-labelledby="mutual-title"><div class="match-icon"><svg class="icon"><use href="#heart"/></svg></div>
-    <h2 id="mutual-title">Это взаимно!</h2><p id="match-message"></p><button class="primary" id="show-matches">К взаимностям</button><button id="continue">Продолжить подбор</button>
+    <h2 id="mutual-title">Это взаимно!</h2><p id="match-message"></p><div id="mutual-contact" aria-live="polite"></div><button class="primary" id="show-matches">К взаимностям</button><button id="continue">Продолжить подбор</button>
+  </dialog>
+  <dialog id="contact-consent" aria-labelledby="contact-title">
+    <h2 id="contact-title">Обмен контактами</h2>
+    <p>При взаимном лайке вы увидите @username друг друга. Это правило действует и для уже созданных взаимностей.</p>
+    <button class="primary" id="accept-contacts">Подтвердить</button>
+    <button id="cancel-contacts">Отмена</button>
   </dialog>
 </body>
 </html>

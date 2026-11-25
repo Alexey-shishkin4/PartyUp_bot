@@ -22,7 +22,7 @@ from .domain.matching import steam_card_game_ids
 from .persistence.models import Event
 from .services.fixture_catalog import fixture_definitions, fixture_photo
 from .telegram.contacts import current_username
-from .telegram.ui import MAX_PHOTO_SIZE
+from .telegram.ui import MAX_PHOTO_SIZE, USERNAME_REQUIRED
 
 STATIC = ROOT / "static/miniapp"
 DECK = ("mira", "nika", "mark", "asya", "artem", "sonya")
@@ -185,20 +185,26 @@ def create_web_app(services=None, bot=None):
         creating = request.method == "POST"
         user, account = viewer(request, allow_new=creating)
         data = await body(request)
-        base = {"name", "bio", "game_ids", "share_username"}
-        if not base <= data.keys() or type(data["share_username"]) is not bool:
+        base = {"name", "bio", "game_ids"}
+        if not base <= data.keys():
             raise web.HTTPBadRequest(text="Проверь поля анкеты.")
-        share = data.pop("share_username")
+        if data.pop("share_username", True) is not True:
+            raise web.HTTPBadRequest(text="Открой Mini App заново. Условия обмена контактами обновились.")
         if creating and data.pop("consent", False) is not True:
             raise web.HTTPBadRequest(text="Подтверди публикацию анкеты.")
         if data.keys() - {"name", "age", "timezone", "purpose", "bio", "game_ids"}:
             raise web.HTTPBadRequest(text="Неизвестное поле анкеты.")
         if creating:
             profile = ProfileInput.model_validate(data)
-            profiles.save_profile(account.id, profile, username=account.username, share_username=share,
+            profiles.save_profile(account.id, profile, username=account.username, share_username=True,
                                   photo_file_id=None, use_default_avatar=True, schedule_set=False, create_only=True)
         else:
-            profiles.save_profile(user.telegram_id, None, username=account.username, changes=data, share_username=share)
+            profiles.save_profile(user.telegram_id, None, username=account.username, changes=data)
+        return web.json_response({"saved": True})
+
+    async def accept_contacts(request):
+        _, account = viewer(request)
+        profiles.update_telegram_account(account.id, account.username, share_username=True)
         return web.json_response({"saved": True})
 
     async def update_photo(request):
@@ -225,12 +231,17 @@ def create_web_app(services=None, bot=None):
                                  headers={"X-Can-Undo": "1" if discovery.can_undo_skip(user.id) else "0"})
 
     async def react(request):
-        user, _ = viewer(request)
+        user, account = viewer(request)
         data = await body(request)
         if type(data.get("target")) is not int or not 0 < data["target"] < 2**31 or data.get("kind") not in ("like", "skip"):
             raise web.HTTPBadRequest(text="Некорректная реакция.")
-        if data["kind"] == "like" and not user.share_username:
-            raise DomainError("Включи обмен @username в своей анкете, затем повтори лайк.")
+        if data["kind"] == "like":
+            peer = profiles.user(data["target"])
+            if peer and not peer.is_test:
+                if not account.username:
+                    raise DomainError(USERNAME_REQUIRED)
+                if not user.share_username:
+                    raise DomainError("Подтверди обмен контактами, чтобы поставить лайк.")
         result = discovery.react(user.id, data["target"], data["kind"], fresh=True)
         if result["new"]:
             try:
@@ -238,7 +249,8 @@ def create_web_app(services=None, bot=None):
                 await bot.send_message(peer.telegram_id, "💜 У тебя новая взаимность! Открой /matches.", request_timeout=5)
             except (DomainError, TelegramAPIError, TimeoutError):
                 pass  # The committed match is still available to both users.
-        return web.json_response({"matched": result["matched"]})
+        return web.json_response({"matched": result["matched"],
+                                  **({"match_id": result["match_id"]} if result["matched"] else {})})
 
     async def undo(request):
         user, _ = viewer(request)
@@ -256,7 +268,7 @@ def create_web_app(services=None, bot=None):
         match_id = int(request.match_info["id"])
         peer = discovery.match_peer(user.id, match_id)
         if not peer.share_username:
-            raise DomainError("Собеседник выключил обмен контактами.")
+            raise DomainError("Собеседник ещё не подтвердил обмен контактами.")
         try:
             username = await current_username(bot, peer)
         except (TelegramAPIError, TimeoutError):
@@ -309,6 +321,7 @@ def create_web_app(services=None, bot=None):
         return await avatar(request)
 
     app.add_routes([
+        web.post("/miniapp/api/contact-consent", accept_contacts),
         web.get("/miniapp/api/bootstrap", bootstrap),
         web.get("/miniapp/api/me", me), web.put("/miniapp/api/me", edit), web.post("/miniapp/api/me", edit),
         web.put("/miniapp/api/me/photo", update_photo), web.delete("/miniapp/api/me/photo", update_photo),
