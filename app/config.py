@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     ugi_api_key: SecretStr = SecretStr("")
     henrikdev_api_key: SecretStr = SecretStr("")
     riot_api_key: SecretStr = SecretStr("")
+    faceit_api_key: SecretStr = SecretStr("")
     admin_ids: str = ""
     developer_ids: str = ""
     enable_test_profiles: bool = False
