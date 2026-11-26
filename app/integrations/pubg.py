@@ -8,13 +8,12 @@ from time import monotonic, time
 import httpx
 
 from app.domain.errors import DomainError
-from app.domain.pubg import MODES, PLATFORMS, PubgAccount, PubgPlaytime, PubgRanking, PubgStats
+from app.domain.pubg import ACCOUNT_ID, MODES, PLATFORMS, PubgAccount, PubgPlaytime, PubgRanking, PubgStats
 
 
 OFFICIAL = "https://api.pubg.com/shards"
 PUBLIC = "https://pubg-api.org/api"
 PUBLIC_PLATFORMS = {"steam", "kakao"}
-ACCOUNT_ID = re.compile(r"account\.[0-9a-fA-F]{32}")
 SEASON_ID = re.compile(r"division\.bro\.official\.[a-z0-9-]{1,64}")
 log = logging.getLogger(__name__)
 
@@ -92,7 +91,15 @@ class PubgClient:
         if platform not in PUBLIC_PLATFORMS and not self.api_key:
             raise DomainError("Для PUBG на Xbox и PlayStation нужен ключ официального PUBG API.")
         try:
-            account = PubgAccount(account_id, nickname, platform) if account_id else await self.player(platform, nickname)
+            if account_id:
+                account = PubgAccount(account_id, nickname, platform)
+            elif ACCOUNT_ID.fullmatch(nickname):
+                if not self.api_key:
+                    raise DomainError("Для поиска по PUBG Account ID нужен ключ API. Попробуй указать игровой ник.")
+                payload = await self.get("official", f"/{platform}/players/{nickname}")
+                account = self.player_identity(payload.get("data"), platform, account_id=nickname)
+            else:
+                account = await self.player(platform, nickname)
             if not ACCOUNT_ID.fullmatch(account.account_id):
                 raise PubgAPIError()
         except PubgAPIError as error:
@@ -138,15 +145,19 @@ class PubgClient:
         raise PubgAPIError(404)
 
     @staticmethod
-    def player_identity(payload, platform: str, nickname: str) -> PubgAccount:
+    def player_identity(payload, platform: str, nickname: str | None = None, *, account_id=None) -> PubgAccount:
         player = object_value(payload)
         attrs = object_value(player.get("attributes"))
-        name, account_id = attrs.get("name"), player.get("id")
-        if not isinstance(name, str) or name.casefold() != nickname.casefold():
-            raise PubgAPIError(404)
-        if not isinstance(account_id, str) or not ACCOUNT_ID.fullmatch(account_id):
+        name, found_id = attrs.get("name"), player.get("id")
+        if not isinstance(name, str) or not 1 <= len(name) <= 32 or not name.isprintable():
             raise PubgAPIError()
-        return PubgAccount(account_id, name, platform)
+        if nickname is not None and name.casefold() != nickname.casefold():
+            raise PubgAPIError(404)
+        if not isinstance(found_id, str) or not ACCOUNT_ID.fullmatch(found_id):
+            raise PubgAPIError()
+        if account_id is not None and found_id.casefold() != account_id.casefold():
+            raise PubgAPIError(404)
+        return PubgAccount(found_id, name, platform)
 
     async def playtime(self, account: PubgAccount) -> PubgPlaytime:
         if account.platform in PUBLIC_PLATFORMS:

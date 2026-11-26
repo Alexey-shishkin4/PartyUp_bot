@@ -87,11 +87,9 @@ class SteamClient:
         )
 
     async def _include_dota(self, profile: PublicProfile) -> PublicProfile:
-        if self.dota is not None:
-            steam_playtime = any(
-                game["appid"] == DOTA_APP_ID and game.get("playtime_forever", 0) > 0 for game in profile.games
-            )
-            stats = await self.dota.stats(profile.steam_id, need_duration=not steam_playtime)
+        game = next((game for game in profile.games if game["appid"] == DOTA_APP_ID), None)
+        if self.dota is not None and game and (game.get("playtime_forever", 0) or game.get("playtime_2weeks", 0)):
+            stats = await self.dota.stats(profile.steam_id, need_duration=not game.get("playtime_forever"))
             profile.dota_rank_tier = stats.rank_tier
             profile.dota_rank_checked = stats.rank_checked
             profile.dota_match_minutes = stats.match_minutes

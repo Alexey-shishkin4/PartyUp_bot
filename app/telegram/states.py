@@ -14,18 +14,6 @@ class Form(StatesGroup):
     focus = State()
 
 
-class FortniteForm(StatesGroup):
-    nickname = State()
-
-
-class RiotForm(StatesGroup):
-    valorant = State()
-    league = State()
-
-
-class PubgForm(StatesGroup):
-    account = State()
-
-
-class FaceitForm(StatesGroup):
-    account = State()
+class GameLink(StatesGroup):
+    riot_offer = State()
+    identity = State()

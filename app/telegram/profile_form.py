@@ -207,6 +207,7 @@ class ProfileForm:
                 [
                     [("🎮 Подключить Steam", "registration:steam")],
                     [("Выбрать игры из списка", "registration:manual")],
+                    [("Пропустить", "registration:skip")],
                     [("← Назад", "form:back")],
                 ]
             ),
@@ -228,6 +229,8 @@ class ProfileForm:
         ]
         rows.append([("Посмотреть анкету" if registration else "Сохранить игры", "game:save")])
         if data.get("short_registration"):
+            if not data.get("reviewed"):
+                rows.append([("Пропустить", "registration:skip")])
             rows.append([("← Назад", "review:open" if data.get("reviewed") else "registration:source")])
         elif not registration:
             rows.append([("← К настройкам", "edit:menu")])
@@ -241,8 +244,8 @@ class ProfileForm:
     async def prompt_registration_steam(self, message):
         await message.answer(
             "Пришли ссылку на свой профиль steamcommunity.com. Получим доступные игры и часы для подбора, "
-            "а для Dota 2 проверим публичную статистику в OpenDota.",
-            reply_markup=buttons([[("← К выбору способа", "registration:source")]]),
+            "а для игр с наигрышем проверим доступные ранги.",
+            reply_markup=buttons([[("← Назад", "registration:source"), ("Пропустить", "registration:skip")]]),
         )
 
     async def finish_photo(self, message, state, file_id=PHOTO_UNCHANGED, *, use_default_avatar=False):
@@ -299,7 +302,7 @@ class ProfileForm:
         highlights = self.draft_steam_highlights(data)
         draft = ProfileInput.model_validate(
             {**data["form"], "game_ids": data.get("selected", [])},
-            context={"allow_empty_games": bool(highlights)},
+            context={"allow_empty_games": bool(highlights) or data.get("skip_games", False)},
         )
         return draft, highlights
 
@@ -371,6 +374,6 @@ class ProfileForm:
             profile,
             profile_text(profile) + "\n\n/pause — пауза · /delete — удалить",
             reply_markup=buttons(
-                [[("Изменить анкету", "edit:menu")], [("Фото", "edit:photo"), ("Игры", "edit:games")]]
+                [[("Изменить анкету", "edit:menu")], [("Фото", "edit:photo"), ("Добавить игры", "accounts:open")]]
             ),
         )

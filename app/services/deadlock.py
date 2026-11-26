@@ -21,12 +21,12 @@ class DeadlockProfiles:
         with self.lock, self.db.session.begin() as session:
             user = session.get(User, user_id, with_for_update=True)
             if not user or user.banned or user.is_test or user.steam_id != steam_id:
-                raise DomainError("Steam уже отключён или изменён. Открой /deadlock ещё раз.")
+                raise DomainError("Steam уже отключён или изменён. Открой «Добавить игры» ещё раз.")
             profile = session.get(DeadlockProfile, user_id)
             if profile and profile.steam_id != steam_id:
                 profile.match_count = profile.match_seconds = None
             elif (profile.checked_at if profile else None) != expected_checked_at:
-                raise DomainError("Статистика уже обновилась. Открой /deadlock ещё раз.")
+                raise DomainError("Статистика уже обновилась. Открой «Добавить игры» ещё раз.")
             if profile is None:
                 profile = DeadlockProfile(user_id=user_id)
                 session.add(profile)
@@ -38,3 +38,10 @@ class DeadlockProfiles:
                 profile.match_seconds = stats.match_seconds
             profile.checked_at = utcnow()
             return profile
+
+    def disconnect(self, user_id: int):
+        with self.lock, self.db.session.begin() as session:
+            if session.get(User, user_id, with_for_update=True):
+                profile = session.get(DeadlockProfile, user_id)
+                if profile:
+                    session.delete(profile)

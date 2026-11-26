@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 
 from app.domain.errors import DomainError
@@ -5,6 +6,7 @@ from app.domain.errors import DomainError
 
 MODES = ("solo-fpp", "solo", "duo-fpp", "duo", "squad-fpp", "squad")
 PLATFORMS = frozenset({"steam", "kakao", "xbox", "psn"})
+ACCOUNT_ID = re.compile(r"account\.[0-9a-fA-F]{32}")
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,8 @@ def parse_account(value: str) -> tuple[str, str]:
     platform = "steam"
     if len(parts) == 2 and parts[0].lower() in PLATFORMS:
         platform, value = parts[0].lower(), parts[1]
+    if ACCOUNT_ID.fullmatch(value):
+        return platform, value.lower()
     if not 1 <= len(value) <= 32 or not value.isprintable() or any(char in value for char in ",/\\"):
         raise DomainError("Укажи ник PUBG. Для другой платформы добавь steam, kakao, xbox или psn перед ником.")
     return platform, value

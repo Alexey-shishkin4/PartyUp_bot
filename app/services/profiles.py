@@ -1,12 +1,15 @@
 from sqlalchemy import delete, select
+from sqlalchemy.orm import object_session
 
-from app.domain.dota import dota_game_name
+from app.domain.dota import DOTA_APP_ID, dota_game_name
 from app.domain.errors import DomainError
 from app.domain.matching import CARD_GAME_LIMIT, steam_card_game_ids
 from app.domain.profiles import PHOTO_UNCHANGED, PURPOSES, ProfileInput
+from app.domain.steam import CS2_APP_ID, DEADLOCK_APP_ID, PUBG_APP_ID
 from app.persistence.models import FSMRecord, Game, User, UserGame, utcnow
 
 from .fixture_catalog import fixture_definitions, fixture_photo
+from .game_labels import read_game_labels
 
 
 class ProfileService:
@@ -39,6 +42,7 @@ class ProfileService:
         steam_profile=None,
         use_default_avatar=False,
         schedule_set=None,
+        allow_empty_games=False,
         test_library=(),
     ):
         if photo_file_id is not PHOTO_UNCHANGED:
@@ -56,7 +60,8 @@ class ProfileService:
                     entry.effective_minutes or entry.recent_minutes for entry in user.games
                 )
                 profile = ProfileInput.model_validate(
-                    {**self.public_profile(user), **changes}, context={"allow_empty_games": allow_empty}
+                    {**self.public_profile(user, linked_games={}), **changes},
+                    context={"allow_empty_games": allow_empty},
                 )
             if profile is None:
                 raise DomainError("Нет данных анкеты")
@@ -75,6 +80,7 @@ class ProfileService:
                 self.steam.store_games(session, user, test_library, complete=True)
             if (
                 creating
+                and not allow_empty_games
                 and not profile.game_ids
                 and not any(entry.effective_minutes or entry.recent_minutes for entry in user.games)
             ):
@@ -149,8 +155,14 @@ class ProfileService:
             if user and user.is_test and not user.test_photo_override:
                 user.photo_file_id = file_id
 
-    @staticmethod
-    def public_profile(user: User):
+    def public_profile(self, user: User, *, linked_games=None):
+        if linked_games is None:
+            session = object_session(user)
+            if session is not None:
+                linked_games = read_game_labels(session, [user.id])[user.id]
+            else:
+                with self.db.session() as session:
+                    linked_games = read_game_labels(session, [user.id])[user.id]
         test_info = None
         if user.is_test:
             test_info = fixture_definitions().get(user.telegram_id)
@@ -162,7 +174,16 @@ class ProfileService:
         )
         entries = {entry.app_id: entry for entry in user.games}
         card_games = [entries[app_id] for app_id in highlights] or selected[:CARD_GAME_LIMIT]
-        visible = [dota_game_name(entry.app_id, entry.game.name, user.dota_rank_tier) for entry in card_games]
+        visible = {
+            entry.app_id: dota_game_name(entry.app_id, entry.game.name, user.dota_rank_tier) for entry in card_games
+        }
+        if user.steam_id:
+            for app_id in (DOTA_APP_ID, CS2_APP_ID, DEADLOCK_APP_ID, PUBG_APP_ID):
+                entry = entries.get(app_id)
+                if entry and app_id not in visible and (entry.effective_minutes or entry.recent_minutes):
+                    visible[app_id] = dota_game_name(app_id, entry.game.name, user.dota_rank_tier)
+        for app_id, (name, rank) in linked_games.items():
+            visible[app_id] = f"{name} ({rank})" if rank else name
         return {
             "id": user.id,
             "name": user.name,
@@ -194,7 +215,7 @@ class ProfileService:
             "dota_match_estimate": any(item.dota_match_minutes and not item.minutes for item in automatic),
             "selected_games": [entry.game.name for entry in selected],
             "game_ids": [entry.app_id for entry in selected],
-            "games": visible,
+            "games": list(visible.values()),
             "games_count": len(visible),
         }
 

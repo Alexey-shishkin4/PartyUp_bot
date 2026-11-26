@@ -136,7 +136,7 @@ async def test_registration_imports_steam_and_shows_best_candidate(service, user
         await harness.update(1, callback="photo:default")
         source_buttons = [button.text for row in harness.sent()[-1].reply_markup.inline_keyboard for button in row]
         assert source_buttons[:2] == ["🎮 Подключить Steam", "Выбрать игры из списка"]
-        assert len(source_buttons) == 3
+        assert "Пропустить" in source_buttons
         await harness.update(1, callback="registration:steam")
         await harness.update(1, "https://steamcommunity.com/id/tester")
         assert "• Dota 2 (Властелин I)\n• Unknown Co-op" in harness.photos_sent()[-1].caption
@@ -147,6 +147,8 @@ async def test_registration_imports_steam_and_shows_best_candidate(service, user
         await harness.update(1, "/start")
         assert "Unknown Co-op" in harness.photos_sent()[-1].caption
         await harness.update(1, callback="review:publish", username="alex")
+        assert "Анкета опубликована" in harness.sent()[-1].text
+        await harness.update(1, "/find")
         assert "Игрок 2" in harness.sent()[-1].text
         assert "• Dota 2" in harness.sent()[-1].text
 
@@ -162,7 +164,7 @@ async def test_registration_imports_steam_and_shows_best_candidate(service, user
     assert not any(game.selected for game in user.games)
 
 
-async def test_opendota_match_time_adds_missing_dota_at_registration(service):
+async def test_opendota_match_time_fills_missing_lifetime_with_recent_playtime(service):
     def response(request):
         path = request.url.path
         if request.url.host == "api.opendota.com":
@@ -171,7 +173,9 @@ async def test_opendota_match_time_adds_missing_dota_at_registration(service):
             assert path == "/api/players/256878545/totals"
             return httpx.Response(200, json=[{"field":"duration", "sum":1556196, "n":647}])
         if path == "/IPlayerService/GetRecentlyPlayedGames/v1/":
-            return httpx.Response(200, json={"response":{"total_count":0}})
+            return httpx.Response(200, json={"response": {"total_count": 1, "games": [
+                {"appid": 570, "name": "Dota 2", "playtime_2weeks": 90},
+            ]}})
         assert path == "/IPlayerService/GetOwnedGames/v1/"
         return httpx.Response(200, json={"response":{"game_count":1, "games":[
             {"appid":730, "name":"Counter-Strike 2", "playtime_forever":3600},
@@ -195,9 +199,9 @@ async def test_opendota_match_time_adds_missing_dota_at_registration(service):
 
     user = service.profiles.user_by_telegram(1)
     dota = next(game for game in user.games if game.app_id == 570)
-    assert dota.minutes == 0 and dota.dota_match_minutes == 45698 and not dota.imported
+    assert dota.minutes == 0 and dota.dota_match_minutes == 45698 and dota.imported
     assert weights(user)[570] > weights(user)[730]
-    assert service.profiles.public_profile(user)["steam_game_count"] == 1
+    assert service.profiles.public_profile(user)["steam_game_count"] == 2
     assert service.profiles.public_profile(user)["games"][0] == "Dota 2 (Властелин I)"
     service.steam.disconnect_steam(user.id)
     user = service.profiles.user(user.id)
@@ -243,7 +247,7 @@ async def test_steam_link_import_and_quick_game_selection(service, users):
     saved = service.profiles.user(user.id)
     assert saved.steam_id == "76561198000000001"
     assert any(game.app_id == 999991 and game.minutes == 180 for game in saved.games)
-    await harness.update(1, "/games")
+    await harness.update(1, callback="edit:games")
     await harness.update(1, "Test Game")
     await harness.update(1, callback="game:999991")
     await harness.update(1, callback="game:save")
@@ -274,7 +278,7 @@ async def test_photo_replace_remove_and_game_edit_preserves_photo(service, users
     await harness.update(1,"/photo")
     await harness.update(1,photos=photo_sizes("second-photo"))
     assert service.profiles.photo_file(user.id) == "second-photo"
-    await harness.update(1,"/games")
+    await harness.update(1, callback="edit:games")
     await harness.update(1,callback="game:save")
     assert service.profiles.photo_file(user.id) == "second-photo"
     await harness.update(1,"/photo")

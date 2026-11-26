@@ -62,7 +62,7 @@ async def test_entrypoint_registers_commands_and_runs_telegram_polling(postgres_
         assert not close_bot_session
         assert {"message", "callback_query"} <= set(allowed_updates)
         private_router = next(router for router in dispatcher.sub_routers if router.name == "private")
-        assert {"steam", "fortnite", "riot", "faceit", "deadlock", "pubg"} <= {
+        assert {"steam", "game_accounts"} <= {
             router.name for router in private_router.sub_routers
         }
         await dispatcher.feed_update(
@@ -94,7 +94,8 @@ async def test_entrypoint_registers_commands_and_runs_telegram_polling(postgres_
     assert session.closed
     commands = next(call.commands for call in session.calls if isinstance(call, SetMyCommands))
     command_names = {command.command for command in commands}
-    assert {"find", "steam", "fortnite", "valorant", "lol", "faceit", "deadlock", "pubg"} <= command_names
+    assert {"find", "steam", "games"} <= command_names
+    assert command_names.isdisjoint({"fortnite", "valorant", "lol", "faceit", "cs2", "deadlock", "pubg"})
     assert "test" not in command_names
     db = Database(postgres_url)
     try:

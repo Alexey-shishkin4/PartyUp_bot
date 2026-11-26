@@ -2,6 +2,9 @@ from dataclasses import dataclass, field
 
 
 STEAM_INDIVIDUAL_BASE = 76561197960265728
+CS2_APP_ID = 730
+PUBG_APP_ID = 578080
+DEADLOCK_APP_ID = 1422450
 
 
 @dataclass

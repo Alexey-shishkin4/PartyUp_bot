@@ -21,7 +21,7 @@ class PubgProfiles:
                 raise DomainError("Анкета недоступна.")
             profile = session.get(PubgProfile, user_id)
             if (profile.checked_at if profile else None) != expected_checked_at:
-                raise DomainError("Профиль PUBG уже изменился. Открой /pubg ещё раз.")
+                raise DomainError("Профиль PUBG уже изменился. Открой «Добавить игры» ещё раз.")
             if profile is None:
                 profile = PubgProfile(user_id=user_id)
                 session.add(profile)

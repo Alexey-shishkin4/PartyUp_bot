@@ -2,7 +2,7 @@ from sqlalchemy import delete, select
 
 from app.domain.dota import DOTA_APP_ID
 from app.domain.errors import DomainError
-from app.persistence.models import DeadlockProfile, Game, User, UserGame, utcnow
+from app.persistence.models import DeadlockProfile, FaceitProfile, Game, User, UserGame, utcnow
 
 
 class SteamLibrary:
@@ -22,6 +22,10 @@ class SteamLibrary:
     def _clear_steam_data(session, user):
         if user.id is not None:
             session.execute(delete(DeadlockProfile).where(DeadlockProfile.user_id == user.id))
+            if user.steam_id:
+                session.execute(delete(FaceitProfile).where(
+                    FaceitProfile.user_id == user.id, FaceitProfile.steam_id == user.steam_id,
+                ))
         for entry in list(user.games):
             if entry.imported or entry.dota_match_minutes:
                 if entry.selected:
@@ -130,5 +134,5 @@ class SteamLibrary:
             user = session.get(User, user_id)
             if not user:
                 raise DomainError("Анкета недоступна")
-            user.steam_id = None
             self._clear_steam_data(session, user)
+            user.steam_id = None

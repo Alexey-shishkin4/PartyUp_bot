@@ -6,6 +6,8 @@ from app.domain.errors import DomainError
 from app.domain.matching import compatible, score
 from app.persistence.models import Block, Event, Game, Match, Reaction, Report, User, UserGame, utcnow
 
+from .game_labels import read_game_labels
+
 
 class DiscoveryService:
     def __init__(self, db, lock, profiles, *, include_test_profiles):
@@ -127,7 +129,7 @@ class DiscoveryService:
                 return any(compatible(actor, candidate) for candidate in candidates)
             ranked = [
                 dict(
-                    profile=self.profiles.public_profile(candidate),
+                    candidate=candidate,
                     **score(actor, candidate),
                     same_game_now=focus is not None and self.current_game(candidate) == focus,
                 )
@@ -139,10 +141,14 @@ class DiscoveryService:
                     not row["same_game_now"],
                     -row["score"],
                     -row["components"]["time"],
-                    row["profile"]["id"],
+                    row["candidate"].id,
                 )
             )
-            for position, row in enumerate(ranked[:limit]):
+            result = ranked[:limit]
+            labels = read_game_labels(session, [row["candidate"].id for row in result])
+            for position, row in enumerate(result):
+                candidate = row.pop("candidate")
+                row["profile"] = self.profiles.public_profile(candidate, linked_games=labels[candidate.id])
                 if record_impressions:
                     session.add(
                         Event(
@@ -157,7 +163,7 @@ class DiscoveryService:
                             },
                         )
                     )
-            return ranked[:limit]
+            return result
 
     def reset_test_reactions(self, user_id):
         with self.lock, self.db.session.begin() as session:
@@ -300,8 +306,12 @@ class DiscoveryService:
                     and not peer.banned
                     and not self.blocked(session, user_id, peer_id)
                 ):
-                    result.append({"id": row.id, "profile": self.profiles.public_profile(peer)})
-            return result
+                    result.append((row.id, peer))
+            labels = read_game_labels(session, [peer.id for _, peer in result])
+            return [
+                {"id": match_id, "profile": self.profiles.public_profile(peer, linked_games=labels[peer.id])}
+                for match_id, peer in result
+            ]
 
     def match_peer(self, user_id: int, match_id: int):
         with self.db.session() as session:

@@ -15,7 +15,7 @@ from app.telegram.steam_ui import steam_attempt_allowed, steam_status_text
 from app.telegram.ui import MAX_PHOTO_SIZE, avatar_buttons, buttons, clear_buttons, menu, require_profile
 
 
-def build_profile_router(profiles, cards, fetch_steam_profile, feed_view):
+def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
     router = Router(name="profiles")
     workflow = ProfileForm(profiles, cards)
 
@@ -161,6 +161,7 @@ def build_profile_router(profiles, cards, fetch_steam_profile, feed_view):
                     steam_profile=steam_profile,
                     use_default_avatar=data.get("draft_default_avatar", False),
                     schedule_set=schedule_set,
+                    allow_empty_games=data.get("skip_games", False),
                 )
             except (ValidationError, DomainError) as error:
                 await message.answer("Не удалось сохранить анкету. " + escape(str(error)[:300]))
@@ -172,12 +173,12 @@ def build_profile_router(profiles, cards, fetch_steam_profile, feed_view):
                 if callback.from_user.username
                 else "\nЧтобы собеседники могли написать тебе, добавь @username в настройках Telegram."
             )
-            published = "Анкета опубликована 💜"
-            if steam_profile is None:
-                published += " Найди своих или подключи Steam через /steam."
-            await message.answer(published + extra, reply_markup=menu())
+            await message.answer("Анкета опубликована 💜" + extra, reply_markup=menu())
+            user = profiles.user(user_id)
             if steam_profile:
-                await feed_view.show(message, profiles.user(user_id))
+                await game_flow.steam_attached(message, state, user)
+            else:
+                await game_flow.begin(message, state, user)
 
     @router.message(Command("photo"))
     @router.message(F.text == "📷 Фото анкеты")
@@ -239,12 +240,6 @@ def build_profile_router(profiles, cards, fetch_steam_profile, feed_view):
             use_default_avatar=standard,
         )
 
-    @router.message(Command("games"))
-    async def edit_games(message, state: FSMContext):
-        user = await require_profile(profiles, message)
-        if user:
-            await workflow.open_games(message, state, user)
-
     @router.message(Command("pause"))
     async def pause(message):
         user = await require_profile(profiles, message)
@@ -297,6 +292,17 @@ def build_profile_router(profiles, cards, fetch_steam_profile, feed_view):
         await state.update_data(draft_steam=None)
         await state.set_state(Form.games)
         await workflow.show_games(callback.message, state)
+
+    @router.callback_query(
+        StateFilter(Form.game_source, Form.registration_steam, Form.games), F.data == "registration:skip"
+    )
+    async def skip_registration_games(callback, state: FSMContext):
+        await callback.answer()
+        data = await state.get_data()
+        if data.get("new_registration") and data.get("games_flow") != "edit":
+            await clear_buttons(callback.message)
+            await state.update_data(skip_games=True)
+            await workflow.review_profile(callback.message, state)
 
     @router.message(Form.registration_steam, F.text, ~F.text.startswith("/"))
     async def registration_steam_link(message, state: FSMContext):

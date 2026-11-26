@@ -15,15 +15,17 @@ class FaceitProfiles:
             return session.get(FaceitProfile, user_id)
 
     def save(
-        self, user_id: int, stats: FaceitStats, *, expected_checked_at: datetime | None
+        self, user_id: int, stats: FaceitStats, *, expected_checked_at: datetime | None, expected_steam_id=None,
     ) -> FaceitProfile:
         with self.lock, self.db.session.begin() as session:
             user = session.get(User, user_id, with_for_update=True)
             if not user or user.banned or user.is_test:
                 raise DomainError("Анкета недоступна.")
+            if expected_steam_id is not None and user.steam_id != expected_steam_id:
+                raise DomainError("Привязка Steam изменилась. Открой «Добавить игры» ещё раз.")
             profile = session.get(FaceitProfile, user_id)
             if (profile.checked_at if profile else None) != expected_checked_at:
-                raise DomainError("Профиль FACEIT уже изменился. Открой /faceit ещё раз.")
+                raise DomainError("Профиль FACEIT уже изменился. Открой «Добавить игры» ещё раз.")
             if profile is None:
                 profile = FaceitProfile(user_id=user_id)
                 session.add(profile)
