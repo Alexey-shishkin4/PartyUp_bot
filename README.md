@@ -32,6 +32,9 @@ Compose запускает PostgreSQL 18 и ждёт, пока он начнёт
 | `FORTNITE_API_KEY` | Необязательный ключ fortnite-api.com для резервного получения BR-наигрыша. |
 | `UGI_API_KEY` | Ключ основного источника Valorant из [ugiAPI Developer Panel](https://api.ugilabs.com/panel/). |
 | `HENRIKDEV_API_KEY` | Ключ для определения сервера и резервной статистики Valorant из [HenrikDev Dashboard](https://api.henrikdev.xyz/dashboard/). |
+| `RIOT_API_KEY` | Ключ для League of Legends и резервного определения сервера Valorant из [Riot Developer Portal](https://developer.riotgames.com/). |
+| `PUBG_API_KEY` | JWT из [PUBG Developer Portal](https://developer.pubg.com/). Нужен для ранга подтверждённого текущего сезона и для Xbox или PlayStation. |
+| `PUBG_API_REQUESTS_PER_MINUTE` | Локальный лимит запросов с PUBG JWT. По умолчанию 10. |
 | `RIOT_API_KEY` | Необязательный ключ для резервной статистики League of Legends и резервного определения сервера Valorant из [Riot Developer Portal](https://developer.riotgames.com/). |
 | `ADMIN_IDS` | Числовые Telegram ID через запятую. Доступ к `/reports`, `/ban`, `/unban` и `/dev`. Свой ID можно получить через `/id` после первого запуска. |
 | `DEVELOPER_IDS` | Telegram ID с доступом к `/dev`. |
@@ -47,6 +50,7 @@ Compose запускает PostgreSQL 18 и ждёт, пока он начнёт
 - `/faceit` и `/cs2` показывают уровень FACEIT, Elo, матчи, победы и процент побед в CS2. При первом открытии бот использует SteamID64, который сохранил после подключения Steam по ссылке. Также можно указать никнейм или ссылку FACEIT либо SteamID64 вручную. Карточку можно обновить, сменить или удалить через `/faceit` в личном чате.
 - `/deadlock` использует подключённый Steam. Бот показывает ранг Valve после последнего доступного рейтингового матча и оценку времени в матчах из истории Deadlock API. В расчёт входят длительности найденных матчей с учётом доступных отметок о выходе. Если данных о длительности не хватает, бот показывает число найденных матчей.
 - `/fortnite` принимает ник Epic Games и показывает доступный наигрыш, любимый режим за 30 дней и его ранг. Статистика по отдельным режимам сохраняется в PostgreSQL. [Источники, ограничения и расчёт](docs/fortnite-api.md).
+- `/pubg Ник` показывает суммарное время выживания, отдельные значения для `solo-fpp`, `solo`, `duo-fpp`, `duo`, `squad-fpp`, `squad` и ранги по доступным очередям. По умолчанию платформа Steam. Для Kakao, Xbox и PlayStation можно указать её перед ником, например `/pubg xbox Ник`.
 - `/valorant Имя#Тег` показывает текущий ранг и число матчей. С ключом ugiAPI бот получает число матчей во всех режимах по доступной истории Riot и отдельно запрашивает ранг. Если эта история недоступна или короче известной рейтинговой истории, бот показывает сумму рейтинговых матчей за все доступные акты. HenrikDev может дать ранг и счётчик рейтинговых матчей без ключа ugiAPI. Полный итог по всем режимам с момента создания аккаунта API не гарантируют. [ugiAPI](https://api.ugilabs.com/docs/), [HenrikDev MMR](https://docs.henrikdev.xyz/valorant/api-reference/mmr).
 - `/lol Имя#Тег` показывает ранг и сумму побед и поражений в Solo/Duo. Если записи Solo/Duo нет, бот использует Flex при наличии. Основной источник рейтинга — OP.GG MCP без ключа. Если источник недоступен или дата его снимка неизвестна либо старше суток, бот пробует Riot Games API при заданном `RIOT_API_KEY`. Если Riot недоступен, бот показывает имеющийся снимок OP.GG с пометкой о свежести либо использует резервную статистику Iodid. [OP.GG MCP](https://github.com/opgginc/opgg-mcp) · [Документация Iodid](https://league-os.safjnest.com/doc) · [Riot Games API](https://developer.riotgames.com/docs/lol).
 - `/dev` открывает диагностику, список анкет, редактирование, предпросмотр подбора и журнал действий. Доступ проверяется по Telegram ID.
@@ -57,6 +61,9 @@ Compose запускает PostgreSQL 18 и ждёт, пока он начнёт
 
 В этой версии Riot ID вводится вручную. Для публичного запуска Valorant-интеграции Riot требует проверять владельца аккаунта и получать его согласие через Riot Sign On. Для этого нужен Production API key. [Правила Riot для Valorant](https://developer.riotgames.com/docs/valorant).
 
+Для Steam и Kakao бот запрашивает профиль и пожизненный `timeSurvived` через [pubg-api.org](https://pubg-api.org/api). Это время выживания из доступной истории PUBG, суммарное значение складывается из шести перечисленных режимов. Официальный PUBG API используется для ранга текущего сезона и как резерв для профиля и времени выживания. Если официальный запрос ранга недоступен или JWT пустой, бот показывает данные pubg-api.org с пометкой об отсутствии номера сезона. Xbox и PlayStation используют официальный API.
+
+Сохранённая карточка открывается без запросов. При обновлении ранг проверяется не чаще раза в 15 минут, а время выживания — раза в 6 часов. После сохранения ID игрока и сезона обычное обновление ранга требует одного официального запроса. Сезон кэшируется на час для каждой платформы. Повысить официальный лимит можно через **My Apps → I Need a Higher Limit**. [Лимиты PUBG API](https://documentation.pubg.com/en/rate-limits.html).
 Для CS2 создай приложение в FACEIT App Studio и выпусти ключ типа **Server side** в разделе **API Keys**. Добавь его как `FACEIT_API_KEY` в `.env` и пересоздай контейнер командой `docker compose up -d --build partyup`. При загрузке бот запрашивает профиль и сводную статистику игры `cs2`. Повторный просмотр сохранённой карточки обходится без запроса, обновление доступно раз в 15 минут. [Ключи FACEIT](https://docs.faceit.com/getting-started/authentication/api-keys/) · [FACEIT Data API](https://docs.faceit.com/api/data/).
 
 Если `FACEIT_API_KEY` пустой, бот использует `WOK_API_KEY`. Подключи Steam по ссылке через `/steam`, затем отправь `/cs2` или `/faceit`. Бот возьмёт сохранённый SteamID64. Без подключённого Steam можно отправить `/faceit SteamID64`. WOK делает два запроса на карточку CS2. Карточка указывает источник данных. Если для старого профиля SteamID64 недоступен, укажи его, чтобы обновить привязку. [Документация WOK](https://woksteamapi.com/docs).
@@ -76,6 +83,7 @@ app/
   services/              Операции с анкетами, подбором, игровой статистикой и модерацией
   domain/                Валидация анкеты и правила подбора
   persistence/           Модели SQLAlchemy и инициализация PostgreSQL
+  integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Fortnite, PUBG и Riot
   integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Fortnite, Riot и FACEIT
   integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Deadlock, Fortnite и Riot
   resources/             Каталог игр, аватар, тестовые данные и отчёт модели
