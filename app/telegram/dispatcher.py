@@ -9,6 +9,7 @@ from .routers.common import build_common_router
 from .routers.deadlock import build_deadlock_router
 from .routers.developer import build_developer_router
 from .routers.discovery import build_discovery_router
+from .routers.faceit import build_faceit_router
 from .routers.fallback import build_fallback_router
 from .routers.fortnite import build_fortnite_router
 from .routers.moderation import build_moderation_router
@@ -21,6 +22,7 @@ from .ui import menu
 
 def build_bot(
     services, settings, fetch_steam_profile, fetch_fortnite_profile=None, fetch_riot_profile=None,
+    *, fetch_faceit_profile=None,
     *, fetch_deadlock_profile=None,
 ):
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -45,6 +47,8 @@ def build_bot(
         )
     if fetch_riot_profile is not None:
         private.include_router(build_riot_router(services.profiles, services.riot, fetch_riot_profile))
+    if fetch_faceit_profile is not None:
+        private.include_router(build_faceit_router(services.profiles, services.faceit, fetch_faceit_profile))
     if fetch_deadlock_profile is not None:
         private.include_router(build_deadlock_router(services.profiles, services.deadlock, fetch_deadlock_profile))
     private.include_router(build_fallback_router())

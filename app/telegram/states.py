@@ -21,3 +21,7 @@ class FortniteForm(StatesGroup):
 class RiotForm(StatesGroup):
     valorant = State()
     league = State()
+
+
+class FaceitForm(StatesGroup):
+    account = State()

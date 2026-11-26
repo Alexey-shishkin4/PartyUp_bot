@@ -189,6 +189,19 @@ class RiotProfile(Base):
     checked_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class FaceitProfile(Base):
+    __tablename__ = "faceit_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(36))
+    nickname: Mapped[str] = mapped_column(String(32))
+    skill_level: Mapped[int | None]
+    elo: Mapped[int | None]
+    match_count: Mapped[int | None]
+    wins: Mapped[int | None]
+    win_rate: Mapped[float | None]
+    checked_at: Mapped[datetime] = mapped_column(DateTime)
+    steam_id: Mapped[str | None] = mapped_column(String(20))
+    source: Mapped[str] = mapped_column(String(16), server_default="faceit")
 class DeadlockProfile(Base):
     __tablename__ = "deadlock_profiles"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
