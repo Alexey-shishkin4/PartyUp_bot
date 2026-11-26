@@ -202,6 +202,8 @@ class PubgProfile(Base):
     season_id: Mapped[str | None] = mapped_column(String(96))
     playtime_at: Mapped[datetime | None] = mapped_column(DateTime)
     rank_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class FaceitProfile(Base):
     __tablename__ = "faceit_profiles"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
@@ -215,6 +217,8 @@ class FaceitProfile(Base):
     checked_at: Mapped[datetime] = mapped_column(DateTime)
     steam_id: Mapped[str | None] = mapped_column(String(20))
     source: Mapped[str] = mapped_column(String(16), server_default="faceit")
+
+
 class DeadlockProfile(Base):
     __tablename__ = "deadlock_profiles"
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)

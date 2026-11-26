@@ -23,9 +23,10 @@ from .ui import menu
 
 def build_bot(
     services, settings, fetch_steam_profile, fetch_fortnite_profile=None, fetch_riot_profile=None,
-    *, fetch_pubg_profile=None,
-    *, fetch_faceit_profile=None,
-    *, fetch_deadlock_profile=None,
+    *,
+    fetch_pubg_profile=None,
+    fetch_faceit_profile=None,
+    fetch_deadlock_profile=None,
 ):
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher(storage=DatabaseStorage(services.db), events_isolation=SimpleEventIsolation())

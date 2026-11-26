@@ -32,7 +32,6 @@ Compose запускает PostgreSQL 18 и ждёт, пока он начнёт
 | `FORTNITE_API_KEY` | Необязательный ключ fortnite-api.com для резервного получения BR-наигрыша. |
 | `UGI_API_KEY` | Ключ основного источника Valorant из [ugiAPI Developer Panel](https://api.ugilabs.com/panel/). |
 | `HENRIKDEV_API_KEY` | Ключ для определения сервера и резервной статистики Valorant из [HenrikDev Dashboard](https://api.henrikdev.xyz/dashboard/). |
-| `RIOT_API_KEY` | Ключ для League of Legends и резервного определения сервера Valorant из [Riot Developer Portal](https://developer.riotgames.com/). |
 | `PUBG_API_KEY` | JWT из [PUBG Developer Portal](https://developer.pubg.com/). Нужен для ранга подтверждённого текущего сезона и для Xbox или PlayStation. |
 | `PUBG_API_REQUESTS_PER_MINUTE` | Локальный лимит запросов с PUBG JWT. По умолчанию 10. |
 | `RIOT_API_KEY` | Необязательный ключ для резервной статистики League of Legends и резервного определения сервера Valorant из [Riot Developer Portal](https://developer.riotgames.com/). |
@@ -64,9 +63,11 @@ Compose запускает PostgreSQL 18 и ждёт, пока он начнёт
 Для Steam и Kakao бот запрашивает профиль и пожизненный `timeSurvived` через [pubg-api.org](https://pubg-api.org/api). Это время выживания из доступной истории PUBG, суммарное значение складывается из шести перечисленных режимов. Официальный PUBG API используется для ранга текущего сезона и как резерв для профиля и времени выживания. Если официальный запрос ранга недоступен или JWT пустой, бот показывает данные pubg-api.org с пометкой об отсутствии номера сезона. Xbox и PlayStation используют официальный API.
 
 Сохранённая карточка открывается без запросов. При обновлении ранг проверяется не чаще раза в 15 минут, а время выживания — раза в 6 часов. После сохранения ID игрока и сезона обычное обновление ранга требует одного официального запроса. Сезон кэшируется на час для каждой платформы. Повысить официальный лимит можно через **My Apps → I Need a Higher Limit**. [Лимиты PUBG API](https://documentation.pubg.com/en/rate-limits.html).
+
 Для CS2 создай приложение в FACEIT App Studio и выпусти ключ типа **Server side** в разделе **API Keys**. Добавь его как `FACEIT_API_KEY` в `.env` и пересоздай контейнер командой `docker compose up -d --build partyup`. При загрузке бот запрашивает профиль и сводную статистику игры `cs2`. Повторный просмотр сохранённой карточки обходится без запроса, обновление доступно раз в 15 минут. [Ключи FACEIT](https://docs.faceit.com/getting-started/authentication/api-keys/) · [FACEIT Data API](https://docs.faceit.com/api/data/).
 
 Если `FACEIT_API_KEY` пустой, бот использует `WOK_API_KEY`. Подключи Steam по ссылке через `/steam`, затем отправь `/cs2` или `/faceit`. Бот возьмёт сохранённый SteamID64. Без подключённого Steam можно отправить `/faceit SteamID64`. WOK делает два запроса на карточку CS2. Карточка указывает источник данных. Если для старого профиля SteamID64 недоступен, укажи его, чтобы обновить привязку. [Документация WOK](https://woksteamapi.com/docs).
+
 Deadlock API получает Steam Account ID из SteamID64. Бот делает два запроса на обновление карточки. Первый получает ранг, второй — доступную историю матчей с длительностями. Карточка сохраняется в PostgreSQL, а повторный просмотр в течение 15 минут использует сохранённые данные. Если история недоступна, бот может попробовать получить её через минуту. Оценка охватывает матчи, известные Deadlock API. При отключении или смене Steam сохранённая карточка удаляется. [Документация Deadlock API](https://api.deadlock-api.com/docs).
 
 ## Архитектура
@@ -83,9 +84,7 @@ app/
   services/              Операции с анкетами, подбором, игровой статистикой и модерацией
   domain/                Валидация анкеты и правила подбора
   persistence/           Модели SQLAlchemy и инициализация PostgreSQL
-  integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Fortnite, PUBG и Riot
-  integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Fortnite, Riot и FACEIT
-  integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Deadlock, Fortnite и Riot
+  integrations/          Клиенты Steam Web API, Steam Community, OpenDota, FACEIT, WOK, Deadlock, Fortnite, PUBG и Riot
   resources/             Каталог игр, аватар, тестовые данные и отчёт модели
 compose.yaml             Бот и PostgreSQL с постоянным томом
 scripts/                 Воспроизведение эксперимента с подбором игр

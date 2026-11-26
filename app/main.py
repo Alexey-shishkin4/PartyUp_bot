@@ -7,8 +7,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramUnauthorizedError
 from aiogram.utils.token import TokenValidationError, validate_token
 
 from app.config import Settings
-from app.integrations.faceit import FaceitClient
 from app.integrations.deadlock import DeadlockClient
+from app.integrations.faceit import FaceitClient
 from app.integrations.fortnite import FortniteClient
 from app.integrations.opendota import OpenDotaClient
 from app.integrations.pubg import PubgClient
@@ -61,18 +61,15 @@ async def run(settings: Settings):
                 client, settings.pubg_api_key.get_secret_value(),
                 requests_per_minute=settings.pubg_api_requests_per_minute,
             )
-            bot, dispatcher = build_bot(
-                services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch, fetch_pubg_profile=pubg.fetch
             faceit = FaceitClient(
                 client, settings.faceit_api_key.get_secret_value(),
                 wok_api_key=settings.wok_api_key.get_secret_value(),
             )
-            bot, dispatcher = build_bot(
-                services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch,
-                fetch_faceit_profile=faceit.fetch,
             deadlock = DeadlockClient(client, settings.deadlock_api_key.get_secret_value())
             bot, dispatcher = build_bot(
                 services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch,
+                fetch_pubg_profile=pubg.fetch,
+                fetch_faceit_profile=faceit.fetch,
                 fetch_deadlock_profile=deadlock.fetch,
             )
             try:
