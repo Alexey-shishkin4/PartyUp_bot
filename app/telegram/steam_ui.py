@@ -10,7 +10,7 @@ def steam_status_text(profile):
         return f"Из библиотеки Steam сохранено игр: {count}." if count else "Steam вернул пустую библиотеку."
     if status == "recent":
         return f"Из Steam загружены недавние игры: {count}. Полная библиотека не получена."
-    if status in {"profile_only", "error"}:
+    if status == "profile_only":
         text = "Последняя проверка не загрузила список игр Steam."
         if count:
             text += f" Сохранено игр из предыдущей загрузки: {count}."

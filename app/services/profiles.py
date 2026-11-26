@@ -4,13 +4,13 @@ from sqlalchemy.orm import object_session
 from app.domain.dota import DOTA_APP_ID
 from app.domain.errors import DomainError
 from app.domain.matching import CARD_GAME_LIMIT, steam_card_game_ids
-from app.domain.profiles import PHOTO_UNCHANGED, PURPOSES, ProfileInput
+from app.domain.profiles import PHOTO_UNCHANGED, ProfileInput
 from app.domain.steam import CS2_APP_ID, DEADLOCK_APP_ID, PUBG_APP_ID
 from app.persistence.models import FSMRecord, Game, User, UserGame, utcnow
 
 from .deadlock import DeadlockProfiles
 from .faceit import FaceitProfiles
-from .fixture_catalog import fixture_definitions, fixture_photo
+from .fixture_catalog import fixture_photo
 from .fortnite import FortniteProfiles
 from .game_labels import read_game_labels
 from .pubg import PubgProfiles
@@ -188,9 +188,6 @@ class ProfileService:
             else:
                 with self.db.session() as session:
                     linked_games = read_game_labels(session, [user.id])[user.id]
-        test_info = None
-        if user.is_test:
-            test_info = fixture_definitions().get(user.telegram_id)
         selected = sorted((entry for entry in user.games if entry.selected), key=lambda entry: entry.app_id)
         imported = [entry for entry in user.games if entry.imported]
         automatic = [entry for entry in user.games if entry.imported or entry.dota_match_minutes]
@@ -212,15 +209,11 @@ class ProfileService:
             "name": user.name,
             "age": user.age,
             "is_test": user.is_test,
-            "photo_source_url": test_info.get("pin_url")
-            if test_info and not user.test_photo_override
-            else None,
             "gender": user.gender,
             "looking_for": user.looking_for,
             "age_min": user.age_min,
             "age_max": user.age_max,
             "purpose": user.purpose,
-            "purpose_label": PURPOSES[user.purpose],
             "timezone": user.timezone,
             "start_hour": user.start_hour,
             "end_hour": user.end_hour,
@@ -228,18 +221,12 @@ class ProfileService:
             "bio": user.bio,
             "language": user.language,
             "active": user.active,
-            "has_photo": bool(
-                user.photo_file_id or user.use_default_avatar or (test_info and not user.test_photo_override)
-            ),
             "use_default_avatar": user.use_default_avatar,
-            "steam_connected": bool(user.steam_id),
             "steam_import_status": user.steam_import_status,
             "steam_game_count": len(imported),
             "dota_match_estimate": any(item.dota_match_minutes and not item.minutes for item in automatic),
-            "selected_games": [entry.game.name for entry in selected],
             "game_ids": [entry.app_id for entry in selected],
             "games": list(visible.values()),
-            "games_count": len(visible),
         }
 
     def toggle_active(self, user_id: int):

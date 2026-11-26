@@ -70,9 +70,9 @@ def test_account_deletion_cascades_and_removes_drafts(service, users):
             assert session.scalar(select(func.count()).select_from(model)) == 0
 
 
-def test_import_preserves_manual_choices_and_disconnect_removes_import(service, users):
+def test_import_preserves_manual_choices_and_disconnect_removes_import(service, users, steam_library):
     a = users(1)
-    service.steam.import_games(a.id, [{"appid":105600,"name":"Terraria","playtime_forever":600},
+    steam_library(a.id, [{"appid":105600,"name":"Terraria","playtime_forever":600},
                                 {"appid":9999991,"name":"New Game","playtime_forever":500}])
     imported = service.profiles.user(a.id)
     assert len(imported.games) == 3
@@ -83,21 +83,22 @@ def test_import_preserves_manual_choices_and_disconnect_removes_import(service, 
     assert all(entry.minutes == 0 and not entry.imported for entry in after.games)
 
 
-def test_postgres_stores_unsigned_steam_app_ids_without_overflow(service, users):
+def test_postgres_stores_unsigned_steam_app_ids_without_overflow(service, users, steam_library):
     user = users(1)
     app_id = 2**32 - 1
-    service.steam.import_games(user.id, [{"appid": app_id, "name": "New Game", "playtime_forever": 60}])
+    steam_library(user.id, [{"appid": app_id, "name": "New Game", "playtime_forever": 60}])
     service.discovery.set_current_game(user.id, app_id)
     stored = service.profiles.user(user.id)
     assert service.discovery.current_game(stored) == app_id
     assert any(game.app_id == app_id and game.minutes == 60 for game in stored.games)
 
 
-def test_inflight_import_rejected_after_disconnect(service, users):
+def test_inflight_import_rejected_after_disconnect(service, users, steam_library):
     a = users(1)
+    snapshot = steam_library(a.id, [{"appid": 730}])
     service.steam.disconnect_steam(a.id)
     with pytest.raises(DomainError):
-        service.steam.import_games(a.id, [{"appid":730}], expected_steam_id="76561198000000001")
+        service.steam.save_public_steam(a.id, snapshot, expected_steam_id=snapshot.steam_id)
 
 
 def test_reaction_limit_applies(service, users):

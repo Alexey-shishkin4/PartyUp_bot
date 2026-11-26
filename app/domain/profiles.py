@@ -54,5 +54,4 @@ class ProfileInput(BaseModel):
         return self
 
 
-PURPOSES = {"friends": "Друзья и тиммейты", "romance": "Отношения", "both": "Общение и отношения"}
 PHOTO_UNCHANGED = object()

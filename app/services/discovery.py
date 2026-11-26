@@ -331,7 +331,3 @@ class DiscoveryService:
                 ):
                     return peer
         raise DomainError("Совпадение недоступно или пользователь заблокирован")
-
-    def record(self, actor_id: int, target_id: int, kind: str, details=None):
-        with self.db.session.begin() as session:
-            session.add(Event(actor_id=actor_id, target_id=target_id, kind=kind, details=details or {}))

@@ -3,7 +3,6 @@ from aiogram.fsm.state import State, StatesGroup
 
 # Keep Form and its state names stable for saved Telegram drafts.
 class Form(StatesGroup):
-    consent = State()
     step = State()
     games = State()
     game_source = State()

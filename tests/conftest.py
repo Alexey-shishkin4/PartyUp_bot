@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy.schema import CreateSchema, DropSchema
 
 from app.domain.profiles import ProfileInput
+from app.domain.steam import STEAM_INDIVIDUAL_BASE, PublicProfile
 from app.persistence.database import Database
 from app.services.application import Services
 
@@ -41,6 +42,17 @@ def service(postgres_url):
         yield Services(db, include_test_profiles=True)
     finally:
         db.engine.dispose()
+
+
+@pytest.fixture
+def steam_library(service):
+    def save(user_id, games, *, coverage="library"):
+        steam_id = str(STEAM_INDIVIDUAL_BASE + user_id)
+        snapshot = PublicProfile(steam_id, f"https://steamcommunity.com/profiles/{steam_id}", games, coverage)
+        service.steam.save_public_steam(user_id, snapshot)
+        return snapshot
+
+    return save
 
 
 @pytest.fixture

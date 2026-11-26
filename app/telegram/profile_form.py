@@ -8,7 +8,7 @@ from app.domain.dota import DOTA_APP_ID, dota_game_name
 from app.domain.errors import DomainError
 from app.domain.game_links_draft import GameLinksDraft
 from app.domain.matching import CARD_GAME_LIMIT, steam_card_game_ids
-from app.domain.profiles import PHOTO_UNCHANGED, PURPOSES, ProfileInput
+from app.domain.profiles import ProfileInput
 from app.persistence.models import Game
 
 from .cards import DEFAULT_AVATAR, profile_text
@@ -54,7 +54,6 @@ STEPS = [
 ]
 FIELD_STEPS = {field: (prompt, choices) for field, prompt, choices in STEPS}
 REGISTRATION_FIELDS = ("name", "age", "timezone", "bio")
-PREVIOUS_REGISTRATION_FIELDS = ("name", "age", "purpose", "timezone", "hours")
 EDIT_FIELDS = (
     (("Имя", "name"), ("Возраст", "age")),
     (("Цель знакомства", "purpose"), ("Описание", "bio")),
@@ -62,14 +61,6 @@ EDIT_FIELDS = (
     (("Возраст собеседника", "age_range"), ("Язык общения", "language")),
     (("Часовой пояс", "timezone"), ("Время игры", "hours")),
 )
-
-
-def registration_fields(data):
-    if data.get("new_registration"):
-        return REGISTRATION_FIELDS
-    if data.get("short_registration"):
-        return PREVIOUS_REGISTRATION_FIELDS
-    return tuple(item[0] for item in STEPS)
 
 
 class ProfileForm:
@@ -81,28 +72,14 @@ class ProfileForm:
     async def prompt(self, message, state):
         data = await state.get_data()
         index = data["step_index"]
-        fields = registration_fields(data)
-        if index >= len(fields) and data.get("new_registration"):
+        if index >= len(REGISTRATION_FIELDS):
             await self.prompt_registration_avatar(message, state)
-            return
-        if index >= len(fields) and data.get("short_registration"):
-            await self.show_game_source(message, state)
-            return
-        if index >= len(fields):
-            await state.update_data(photo_flow="registration")
-            await state.set_state(Form.photo)
-            await message.answer(
-                f"<b>{len(STEPS) + 1}/{len(STEPS) + 2}</b> · Добавь фото анкеты.\n"
-                "Отправь одну фотографию обычным фото через скрепку Telegram. "
-                "Она будет видна людям в подборке. Можно продолжить без нового фото.",
-                reply_markup=buttons([[("Продолжить без нового фото", "photo:keep")]]),
-            )
             return
         await self.show_field(
             message,
             state,
-            fields[index],
-            prefix=f"<b>{index + 1}/{len(fields) + 1}</b> · ",
+            REGISTRATION_FIELDS[index],
+            prefix=f"<b>{index + 1}/{len(REGISTRATION_FIELDS) + 1}</b> · ",
             back="form:back" if index > 0 else None,
         )
 
@@ -122,8 +99,12 @@ class ProfileForm:
     async def consume_step(self, message, state, sender, value, expected_field=None):
         data = await state.get_data()
         index = data.get("step_index", 0)
-        fields = registration_fields(data)
-        field = data.get("edit_field") or fields[index]
+        field = data.get("edit_field")
+        if field is None:
+            if not data.get("new_registration") or index >= len(REGISTRATION_FIELDS):
+                await message.answer("Открой регистрацию через /start.")
+                return
+            field = REGISTRATION_FIELDS[index]
         if expected_field is not None and expected_field != field:
             await message.answer("Эта кнопка относится к предыдущему шагу.")
             return
@@ -238,11 +219,11 @@ class ProfileForm:
             for game in games
         ]
         rows.append([("Посмотреть анкету" if registration else "Сохранить игры", "game:save")])
-        if data.get("short_registration"):
+        if registration:
             if not data.get("reviewed"):
                 rows.append([("Пропустить", "registration:skip")])
             rows.append([("← Назад", "review:open" if data.get("reviewed") else "registration:source")])
-        elif not registration:
+        else:
             rows.append([("← К настройкам", "edit:menu")])
         names = [catalog[app_id].name[:55] for app_id in selected if app_id in catalog]
         await message.answer(
@@ -258,29 +239,19 @@ class ProfileForm:
             reply_markup=buttons([[("← Назад", "registration:source"), ("Пропустить", "registration:skip")]]),
         )
 
-    async def finish_photo(self, message, state, file_id=PHOTO_UNCHANGED, *, use_default_avatar=False):
+    async def finish_photo(self, message, state, file_id, *, use_default_avatar=False):
         data = await state.get_data()
         if data.get("photo_flow") in {"registration", "review"}:
-            if file_id is not PHOTO_UNCHANGED:
-                await state.update_data(draft_photo_file_id=file_id, draft_default_avatar=use_default_avatar)
+            await state.update_data(draft_photo_file_id=file_id, draft_default_avatar=use_default_avatar)
             if data.get("photo_flow") == "review":
                 await self.review_profile(message, state)
-                return
-            if data.get("new_registration"):
+            else:
                 await self.show_game_source(message, state)
-                return
-            await state.set_state(Form.games)
-            await message.answer(
-                "Выбери от 1 до 10 актуальных игр. Напиши название для поиска или выбирай кнопками. Steam можно подключить после сохранения."
-            )
-            await self.show_games(message, state)
         else:
             await state.clear()
             text = (
                 "Стандартный аватар установлен."
                 if use_default_avatar
-                else "Вернулись в меню."
-                if file_id is PHOTO_UNCHANGED
                 else "Фото удалено из анкеты."
                 if file_id is None
                 else "Фото сохранено."
@@ -335,7 +306,7 @@ class ProfileForm:
         for app_id, game_rank in links.game_ranks().items():
             name = catalog[app_id].name
             games[app_id] = f"{name} ({game_rank})" if game_rank else name
-        profile = {**draft.model_dump(), "games": list(games.values()), "purpose_label": PURPOSES[draft.purpose]}
+        profile = {**draft.model_dump(), "games": list(games.values())}
         wanted = {value: label for label, value in FIELD_STEPS["looking_for"][1]}[draft.looking_for]
         language = {value: label for label, value in FIELD_STEPS["language"][1]}[draft.language]
         filters = f"Кого показывать: {wanted.lower()} · {draft.age_min}–{draft.age_max} лет · {language}"

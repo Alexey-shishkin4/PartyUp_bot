@@ -2,7 +2,7 @@ import json
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import URL, create_engine, inspect, select
+from sqlalchemy import URL, create_engine, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
@@ -30,9 +30,6 @@ class Database:
             connection.exec_driver_sql(
                 "SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('partyup'))"
             )
-            schema = inspect(connection)
-            if schema.has_table("users") and not schema.has_table("alembic_version"):
-                raise RuntimeError("Обнаружена старая схема PartyUp. Для первой миграции нужна пустая PostgreSQL.")
             config = Config(str(ROOT / "alembic.ini"))
             config.attributes["connection"] = connection
             command.upgrade(config, "head")

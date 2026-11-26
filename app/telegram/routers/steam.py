@@ -56,13 +56,13 @@ def build_steam_router(profiles, steam, fetch_steam_profile, game_flow):
         await message.answer(escape(text), reply_markup=menu())
         await game_flow.steam_attached(message, state, user, guide=not refresh)
 
-    @router.callback_query(F.data.startswith("steam:"))
+    @router.callback_query(F.data.in_({"steam:open", "steam:disconnect", "steam:sync"}))
     async def steam_action(callback, state: FSMContext):
         await callback.answer()
         user = profiles.user_by_telegram(callback.from_user.id)
         if not user or user.banned:
             return
-        if callback.data in {"steam:add", "steam:open"}:
+        if callback.data == "steam:open":
             await show_steam(callback.message, state, user)
             return
         if callback.data == "steam:disconnect":
@@ -70,12 +70,10 @@ def build_steam_router(profiles, steam, fetch_steam_profile, game_flow):
             await state.clear()
             await callback.message.answer("Steam и импорт удалены. Вручную выбранные игры сохранены.")
             return
-        if callback.data != "steam:sync":
-            return
         if not user.steam_id:
             await callback.message.answer("Сначала подключи Steam: /steam")
             return
-        interval = timedelta(minutes=1 if user.steam_import_status in {"profile_only", "error"} else 15)
+        interval = timedelta(minutes=1 if user.steam_import_status == "profile_only" else 15)
         if user.steam_checked_at:
             remaining = interval - (utcnow() - user.steam_checked_at)
             if remaining.total_seconds() > 0:

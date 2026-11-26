@@ -16,9 +16,9 @@ database of consented profiles is stored separately from this aggregate file.
 Complete license texts are in [licenses/ODbL-1.0.txt](licenses/ODbL-1.0.txt)
 and [licenses/DbCL-1.0.txt](licenses/DbCL-1.0.txt).
 
-The entire machine-readable derivative is included in this package and served
-at `/model/affinity.json`. Attribution, license links and the evaluation report
-are available at `/model` and from the bot's `/about` command.
+The package includes the full machine-readable derivative. The Telegram bot
+sends it and the evaluation report with the `/model` command. Attribution and
+license links are available in `/model` and `/about`.
 
 Reproduction: download `steam-200k.csv` from the source above and run
 `python scripts/train_model.py --csv PATH/steam-200k.csv`.

@@ -38,7 +38,7 @@ def test_timezone_and_overnight_are_real_utc_intervals(service, users):
     a = users(1, timezone="Asia/Novosibirsk", start_hour=22, end_hour=2)
     b = users(2, timezone="Europe/Moscow", start_hour=18, end_hour=22)
     assert schedule_slots(a, now) == schedule_slots(b, now)
-    assert score(a, b, now)["overlap_hours"] == 4
+    assert score(a, b, now)["components"]["time"] == 1
 
 
 def test_dst_applied_per_date(users):
@@ -70,13 +70,13 @@ def test_empty_library_does_not_match_by_unused_purchases(service, users):
     assert result["components"]["genres"] == 0
 
 
-def test_feed_prioritizes_mutual_dota_playtime_and_concentration(service, users):
+def test_feed_prioritizes_mutual_dota_playtime_and_concentration(service, users, steam_library):
     actor, dedicated, broad, new_player, manual = (
         users(telegram, game_ids=[570]) for telegram in range(1, 6)
     )
 
     def import_hours(user, games):
-        service.steam.import_games(user.id, [{"appid": app_id, "playtime_forever": hours * 60}
+        steam_library(user.id, [{"appid": app_id, "playtime_forever": hours * 60}
                                        for app_id, hours in games.items()])
 
     import_hours(actor, {570: 1500, 730: 0})
@@ -93,10 +93,10 @@ def test_feed_prioritizes_mutual_dota_playtime_and_concentration(service, users)
     assert by_id[broad.id]["components"]["other_games"] == 0
 
 
-def test_secondary_shared_game_contributes_with_both_players_hours(service, users):
+def test_secondary_shared_game_contributes_with_both_players_hours(service, users, steam_library):
     a, b = users(1, game_ids=[570]), users(2, game_ids=[570])
     for user, hours in ((a, 200), (b, 100)):
-        service.steam.import_games(user.id, [
+        steam_library(user.id, [
             {"appid": 570, "playtime_forever": 600 * 60}, {"appid": 730, "playtime_forever": hours * 60},
         ])
     result = score(service.profiles.user(a.id), service.profiles.user(b.id))

@@ -54,10 +54,10 @@ def test_profiles_include_hidden_banned_and_test_with_pagination(service, users)
     assert dev.read_profile(1, second.id)["banned"]
 
 
-def test_field_edits_validate_preserve_related_data_and_audit_only_field_names(service, users):
+def test_field_edits_validate_preserve_related_data_and_audit_only_field_names(service, users, steam_library):
     target = users(2)
     service.profiles.set_photo(target.id, "keep-photo")
-    service.steam.import_games(target.id, [{"appid": 570, "name": "Dota 2", "playtime_forever": 600}])
+    steam_library(target.id, [{"appid": 570, "name": "Dota 2", "playtime_forever": 600}])
     dev = developer(service)
     dev.update_profile(1, target.id, {"name": "Новое имя", "bio": "Private updated biography", "age": 27})
     updated = service.profiles.user(target.id)
@@ -101,9 +101,9 @@ def test_editing_banned_profile_and_unbanning_is_allowed_to_developer(service, u
     assert updated.name == "Исправлено" and not updated.banned and not updated.active
 
 
-def test_game_edits_preserve_imported_hours(service, users):
+def test_game_edits_preserve_imported_hours(service, users, steam_library):
     target = users(2)
-    service.steam.import_games(target.id, [{"appid": 570, "name": "Dota 2", "playtime_forever": 500}])
+    steam_library(target.id, [{"appid": 570, "name": "Dota 2", "playtime_forever": 500}])
     dev = developer(service)
     dev.set_games(1, target.id, [570, 730])
     updated = service.profiles.user(target.id)
@@ -128,10 +128,9 @@ def test_developer_fixture_edits_and_photo_overrides_survive_seeding(service):
     assert [entry.app_id for entry in updated.games if entry.selected] == [570]
     assert updated.photo_file_id == "developer-photo" and updated.test_photo_override
     assert service.profiles.test_photo_file(target.id) is None
-    assert service.profiles.public_profile(updated)["photo_source_url"] is None
     dev.set_photo(1, target.id, None)
     seed_test_profiles(service)
-    assert not service.profiles.public_profile(service.profiles.user(target.id))["has_photo"]
+    assert service.profiles.photo_file(target.id) is None
     assert service.profiles.test_photo_file(target.id) is None
 
 

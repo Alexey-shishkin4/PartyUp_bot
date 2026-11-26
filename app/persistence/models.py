@@ -83,7 +83,6 @@ class Game(Base):
     slug: Mapped[str] = mapped_column(String(96), unique=True)
     genres: Mapped[list] = mapped_column(JSON, default=list)
     aliases: Mapped[list] = mapped_column(JSON, default=list)
-    coop: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class UserGame(Base):

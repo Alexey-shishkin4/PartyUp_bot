@@ -33,7 +33,6 @@ LEAGUE_ALIASES = {
     "th2": "sg2",
 }
 
-VALORANT_ACT = "valorant_act"
 VALORANT_RIOT_HISTORY = "valorant_riot_history"
 VALORANT_RANKED_ACTS = "valorant_ranked_acts"
 LEAGUE_SOLO = "RANKED_SOLO_5x5"

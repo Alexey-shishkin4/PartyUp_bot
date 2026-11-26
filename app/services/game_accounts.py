@@ -5,7 +5,7 @@ from app.domain.errors import DomainError
 from app.domain.faceit import FaceitLookup
 from app.domain.game_links_draft import CheckedSnapshot, RiotLinkDraft
 from app.domain.pubg import parse_account
-from app.domain.riot import VALORANT_ACT, RiotGame, RiotId
+from app.domain.riot import RiotGame, RiotId
 from app.domain.steam import CS2_APP_ID, DEADLOCK_APP_ID
 from app.persistence.models import utcnow
 
@@ -52,13 +52,13 @@ class GameAccounts:
     def fresh(checked_at, *, interval=REFRESH_INTERVAL):
         return checked_at is not None and utcnow() - checked_at < interval
 
-    async def sync_steam(self, user, *, skip=()):
+    async def sync_steam(self, user):
         jobs = {}
-        if "faceit" in self.fetchers and "faceit" not in skip and self.played(user, CS2_APP_ID):
+        if "faceit" in self.fetchers and self.played(user, CS2_APP_ID):
             row = self.services.faceit.get(user.id)
             if not row or row.account.details.get("steam_id") == user.steam_id:
                 jobs["FACEIT"] = self.faceit(user, FaceitLookup("steam_id", user.steam_id), from_steam=True)
-        if "deadlock" in self.fetchers and "deadlock" not in skip and self.played(user, DEADLOCK_APP_ID):
+        if "deadlock" in self.fetchers and self.played(user, DEADLOCK_APP_ID):
             jobs["Deadlock"] = self.deadlock(user)
         return await self.steam_results(jobs)
 
@@ -147,7 +147,7 @@ class GameAccounts:
         regions = {}
         for game, row in existing.items():
             same = row and row.account.external_account_id == "#".join(account.normalized)
-            if same and self.fresh(row.checked_at) and row.scope != VALORANT_ACT:
+            if same and self.fresh(row.checked_at):
                 continue
             regions[game] = row.details.get("region") if same else None
         snapshots, errors = await self.fetch_riot(account, regions)

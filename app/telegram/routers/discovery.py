@@ -58,7 +58,6 @@ def build_discovery_router(profiles, discovery, cards, feed_view):
                             ("Заблокировать в боте", f"match:block:{row['id']}"),
                             ("Пожаловаться", f"match:report:{row['id']}"),
                         ],
-                        [("Мы пообщались / сыграли", f"feedback:{row['id']}")],
                     ]
                 ),
             )
@@ -323,26 +322,6 @@ def build_discovery_router(profiles, discovery, cards, feed_view):
         await feed_view.show(
             callback.message, profiles.user(user.id), replace=True, allow_undo=kind == "skip"
         )
-
-    @router.callback_query(F.data.startswith("chat:") | F.data.startswith("contact:"))
-    async def old_chat_button(callback, state: FSMContext):
-        await callback.answer()
-        await state.clear()
-        user = profiles.update_telegram_account(callback.from_user.id, callback.from_user.username)
-        if user and not user.banned:
-            await show_matches(callback.message, user)
-
-    @router.callback_query(F.data.startswith("feedback:"))
-    async def feedback(callback):
-        await callback.answer()
-        user = profiles.user_by_telegram(callback.from_user.id)
-        if user:
-            try:
-                peer = discovery.match_peer(user.id, int(callback.data.split(":")[1]))
-                discovery.record(user.id, peer.id, "positive_feedback")
-                await callback.message.answer("Спасибо! Учтём, что знакомство состоялось.")
-            except DomainError:
-                await callback.message.answer("Совпадение недоступно.")
 
     @router.message(Form.focus, F.text, ~F.text.startswith("/"))
     async def focus_search(message, state: FSMContext):

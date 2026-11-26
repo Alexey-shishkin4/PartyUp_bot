@@ -1,4 +1,3 @@
-import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect, text
@@ -18,25 +17,29 @@ def test_alembic_schema_matches_models_and_initialization_is_idempotent(service,
         config = Config(str(ROOT / "alembic.ini"))
         config.attributes["connection"] = connection
         command.check(config)
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0001"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
         schema = inspect(connection)
         assert {"user_games", "game_accounts", "game_stats", "games", "users"} <= set(schema.get_table_names())
-        assert "faceit_profiles" not in schema.get_table_names()
-        assert "steam_id" not in {column["name"] for column in schema.get_columns("users")}
+        assert "coop" not in {column["name"] for column in schema.get_columns("games")}
     profile = service.faceit.get(user.id)
     assert profile.account.external_account_id == stats.player_id
     assert profile.details["elo"] == stats.elo
 
 
-def test_initialization_does_not_erase_an_unversioned_database(postgres_url):
+def test_alembic_upgrade_preserves_the_existing_game_catalog(postgres_url):
     db = Database(postgres_url)
     try:
         with db.engine.begin() as connection:
-            connection.exec_driver_sql("CREATE TABLE users (id INTEGER PRIMARY KEY)")
-            connection.exec_driver_sql("INSERT INTO users (id) VALUES (1)")
-        with pytest.raises(RuntimeError, match="старая схема"):
-            db.initialize()
+            config = Config(str(ROOT / "alembic.ini"))
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0001")
+            connection.execute(text(
+                "INSERT INTO games (app_id, name, slug, genres, aliases, coop) "
+                "VALUES (730, 'Existing CS2 entry', 'counter-strike-2', '[]', '[]', TRUE)"
+            ))
+        db.initialize()
         with db.engine.connect() as connection:
-            assert connection.scalar(text("SELECT id FROM users")) == 1
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
+            assert connection.scalar(text("SELECT name FROM games WHERE app_id = 730")) == "Existing CS2 entry"
     finally:
         db.engine.dispose()

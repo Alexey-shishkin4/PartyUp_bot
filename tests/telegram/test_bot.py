@@ -1,6 +1,6 @@
 
 import httpx
-from aiogram.methods import EditMessageMedia, EditMessageText
+from aiogram.methods import AnswerCallbackQuery, EditMessageMedia, EditMessageText
 from aiogram.types import Document, FSInputFile
 from sqlalchemy import func, select
 
@@ -9,9 +9,7 @@ from app.integrations.steam import SteamClient
 from app.persistence.models import FSMRecord
 from app.telegram.cards import DEFAULT_AVATAR
 from app.telegram.polling import deliver_profile_alerts
-from app.telegram.states import Form
-
-from .harness import Harness, photo_sizes, register
+from .harness import Harness, photo_sizes, reach_registration_avatar, register
 
 
 async def test_moderation_router_checks_admin_and_resolves_reports(service, users):
@@ -96,7 +94,7 @@ async def test_deleting_profile_removes_fsm_telegram_id(service):
     await harness.bot.session.close()
 
 
-async def test_registration_imports_steam_and_shows_best_candidate(service, users):
+async def test_registration_imports_steam_and_shows_best_candidate(service, users, steam_library):
     def steam_response(request):
         if request.url.host == "api.opendota.com":
             assert request.url.path == "/api/players/39734273"
@@ -121,10 +119,10 @@ async def test_registration_imports_steam_and_shows_best_candidate(service, user
 
     broad = users(3, game_ids=[570])
     dedicated = users(2, game_ids=[570])
-    service.steam.import_games(broad.id, [
+    steam_library(broad.id, [
         {"appid":570, "playtime_forever":90000}, {"appid":730, "playtime_forever":270000},
     ])
-    service.steam.import_games(dedicated.id, [{"appid":570, "playtime_forever":72000}])
+    steam_library(dedicated.id, [{"appid":570, "playtime_forever":72000}])
     async with httpx.AsyncClient(transport=httpx.MockTransport(steam_response)) as client:
         steam = SteamClient("test-key", client, OpenDotaClient(client))
         harness = Harness(service, steam=steam)
@@ -209,8 +207,6 @@ async def test_opendota_match_time_fills_missing_lifetime_with_recent_playtime(s
 
 
 async def test_registration_with_unavailable_steam_library_keeps_manual_games(service):
-    from aiogram.fsm.storage.base import StorageKey
-
     from app.domain.steam import PublicProfile
 
     class Parser:
@@ -218,12 +214,11 @@ async def test_registration_with_unavailable_steam_library_keeps_manual_games(se
             return PublicProfile("76561198000000001", url, coverage="profile_only")
 
     harness = Harness(service, Parser())
-    key = StorageKey(bot_id=harness.bot.id, chat_id=1, user_id=1)
-    await harness.dp.storage.set_state(key, Form.games)
-    await harness.dp.storage.set_data(key, {
-        "short_registration": True, "step_index": 5,
-        "form": {"name":"Алекс", "age":25}, "selected": [570],
-    })
+    await reach_registration_avatar(harness)
+    await harness.update(1, callback="photo:default")
+    await harness.update(1, callback="registration:manual")
+    await harness.update(1, callback="game:570")
+    await harness.update(1, callback="game:save")
     await harness.update(1, callback="registration:steam")
     await harness.update(1, "https://steamcommunity.com/id/tester")
     assert "Steam не предоставил список игр и часы" in harness.sent()[-2].text
@@ -260,7 +255,6 @@ async def test_photo_in_registration_and_own_profile(service):
     await register(harness, with_photo=True)
     user = service.profiles.user_by_telegram(1)
     assert user.photo_file_id == "photo-original"
-    assert service.profiles.public_profile(user)["has_photo"]
     assert "photo_file_id" not in service.profiles.public_profile(user)
     await harness.update(1,"/profile")
     photo = harness.photos_sent()[-1]
@@ -315,13 +309,13 @@ async def test_discovery_and_matches_show_profile_photo(service, users):
     await harness.bot.session.close()
 
 
-async def test_discovery_shows_shared_games_beyond_profile_highlights(service, users):
-    viewer = users(1, game_ids=[570])
-    peer = users(2, game_ids=[570])
+async def test_discovery_shows_shared_games_beyond_profile_highlights(service, users, steam_library):
+    viewer = users(1, game_ids=[620])
+    peer = users(2, game_ids=[620])
     unrelated = users(3, game_ids=[105600])
-    shared = [{"appid": 570, "playtime_forever": 18000}, {"appid": 730, "playtime_forever": 6000}]
-    service.steam.import_games(viewer.id, shared)
-    service.steam.import_games(peer.id, shared + [
+    shared = [{"appid": 620, "playtime_forever": 18000}, {"appid": 550, "playtime_forever": 6000}]
+    steam_library(viewer.id, shared)
+    steam_library(peer.id, shared + [
         {"appid": app_id, "playtime_forever": 24000, "playtime_2weeks": 600}
         for app_id in [440, 105600, 548430, 1245620, 3241660]
     ])
@@ -330,8 +324,8 @@ async def test_discovery_shows_shared_games_beyond_profile_highlights(service, u
     await harness.update(1, "/find")
     card = harness.sent()[-1].text
     highlights, common = card.split("<b>🤝 Общие игры</b>\n")
-    assert peer.name in highlights and "Dota 2" not in highlights and "Counter-Strike 2" not in highlights
-    assert common == "Dota 2 · Counter-Strike 2"
+    assert peer.name in highlights and "Portal 2" not in highlights and "Left 4 Dead 2" not in highlights
+    assert common == "Portal 2 · Left 4 Dead 2"
 
     await harness.update(1, callback=f"react:skip:{peer.id}", card_text=card)
     next_card = [call for call in harness.session.calls if isinstance(call, EditMessageText)][-1].text
@@ -341,23 +335,18 @@ async def test_discovery_shows_shared_games_beyond_profile_highlights(service, u
 
 async def test_photo_draft_survives_restart_before_registration_save(service):
     harness = Harness(service)
-    await register(harness,with_photo=True)
-    user = service.profiles.user_by_telegram(1)
-    # Test a separate unfinished registration from the photo step through a restart.
-    from aiogram.fsm.storage.base import StorageKey
-    key = StorageKey(bot_id=harness.bot.id,chat_id=2,user_id=2)
-    await harness.dp.storage.set_state(key,Form.photo)
-    await harness.dp.storage.set_data(key,{
-        "photo_flow":"registration", "form":{"name":"Новый игрок","age":25}, "selected":[]
-    })
-    await harness.update(2,photos=photo_sizes("draft-photo"))
+    await reach_registration_avatar(harness)
+    await harness.update(1, callback="photo:upload")
+    await harness.update(1, photos=photo_sizes("draft-photo"))
     restarted = Harness(service)
-    await restarted.update(2,callback="game:105600")
-    await restarted.update(2,callback="game:save")
-    assert service.profiles.user_by_telegram(2) is None
-    await restarted.update(2,callback="review:publish")
-    assert service.profiles.user_by_telegram(2).photo_file_id == "draft-photo"
-    assert service.profiles.photo_file(user.id) == "photo-original"
+    await restarted.update(1, "/start")
+    await restarted.update(1, callback="registration:manual")
+    await restarted.update(1, callback="game:105600")
+    await restarted.update(1, callback="game:save")
+    assert restarted.photos_sent()[-1].photo == "draft-photo"
+    assert service.profiles.user_by_telegram(1) is None
+    await restarted.update(1, callback="review:publish")
+    assert service.profiles.user_by_telegram(1).photo_file_id == "draft-photo"
     await harness.bot.session.close()
     await restarted.bot.session.close()
 
@@ -372,8 +361,6 @@ async def test_oversize_and_document_photo_rejected_without_changes(service,user
     await harness.update(1,document=Document(file_id="image-document",file_unique_id="doc",
                                            mime_type="image/jpeg",file_name="image.jpg"))
     assert "обычное фото" in harness.sent()[-1].text
-    assert service.profiles.photo_file(user.id) == "keep-this-photo"
-    await harness.update(1,callback="photo:keep")
     assert service.profiles.photo_file(user.id) == "keep-this-photo"
     await harness.bot.session.close()
 
@@ -411,20 +398,12 @@ async def test_unavailable_telegram_photo_falls_back_to_text(service,users):
     await harness.bot.session.close()
 
 
-async def test_old_chat_button_does_not_restore_the_message_relay(service, users):
-    a,b = users(1),users(2)
-    service.profiles.set_photo(a.id,"original-profile-photo")
-    service.discovery.feed(a.id)
-    service.discovery.feed(b.id)
-    service.discovery.react(a.id,b.id,"like")
-    match = service.discovery.react(b.id,a.id,"like")
+async def test_unknown_callback_prompts_to_reopen_the_menu(service, users):
+    users(1)
     harness = Harness(service)
-    await harness.update(1,callback=f"chat:{match['match_id']}")
-    await harness.update(1, "Эта реплика не будет переслана.")
-    await harness.update(1,photos=photo_sizes("private-chat-photo"))
-    assert service.profiles.photo_file(a.id) == "original-profile-photo"
-    assert not harness.photos_sent()
-    assert all(message.chat_id == 1 for message in harness.sent())
+    await harness.update(1, callback="removed:callback")
+    answer = next(call for call in harness.session.calls if isinstance(call, AnswerCallbackQuery))
+    assert "Эта кнопка устарела" in answer.text
     await harness.bot.session.close()
 
 
@@ -537,10 +516,10 @@ async def test_static_test_profiles_appear_in_regular_search_without_answers(ser
     await harness.bot.session.close()
 
 
-async def test_edit_one_field_preserves_profile_and_steam_games(service, users):
+async def test_edit_one_field_preserves_profile_and_steam_games(service, users, steam_library):
     user = users(1, bio="Старый текст")
     service.profiles.set_photo(user.id, "original-photo")
-    service.steam.import_games(user.id, [{"appid":730, "name":"Counter-Strike 2", "playtime_forever":40}])
+    steam_library(user.id, [{"appid":730, "name":"Counter-Strike 2", "playtime_forever":40}])
     harness = Harness(service)
     await harness.update(1, "/edit", username="alex")
     assert "Что хочешь изменить?" in harness.sent()[-1].text
@@ -554,7 +533,7 @@ async def test_edit_one_field_preserves_profile_and_steam_games(service, users):
     await harness.bot.session.close()
 
 
-async def test_short_registration_goes_back_and_publishes_with_default_avatar(service):
+async def test_registration_goes_back_and_publishes_with_default_avatar(service):
     harness = Harness(service)
     await harness.update(1, "/start")
     await harness.update(1, "Алекс")
@@ -603,10 +582,10 @@ async def test_skip_replaces_card_and_undo_restores_it_from_empty_feed(service, 
     await harness.bot.session.close()
 
 
-async def test_play_now_filters_old_steam_library_and_keeps_mutual_filters(service, users):
+async def test_play_now_filters_old_steam_library_and_keeps_mutual_filters(service, users, steam_library):
     viewer = users(1)
     unrelated = users(2)
-    service.steam.import_games(unrelated.id, [{"appid":730, "playtime_forever":9999}])
+    steam_library(unrelated.id, [{"appid":730, "playtime_forever":9999}])
     candidate = users(3, game_ids=[730])
     incompatible = users(4, game_ids=[730], age_min=40)
     service.discovery.set_current_game(candidate.id, 730)

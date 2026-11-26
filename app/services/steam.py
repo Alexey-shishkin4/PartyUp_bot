@@ -75,18 +75,6 @@ class SteamLibrary:
         if not minutes and not entry.imported and not entry.selected:
             user.games.remove(entry)
 
-    def import_games(
-        self, user_id: int, games: list[dict], expected_steam_id: str | None = None, complete: bool = True
-    ):
-        with self.lock, self.db.session.begin() as session:
-            user = session.get(User, user_id, with_for_update=True)
-            if not user or user.banned:
-                raise DomainError("Анкета недоступна")
-            if expected_steam_id is not None and user.steam_id != expected_steam_id:
-                raise DomainError("Steam уже отключён или изменён. Импорт отменён")
-            self.store_games(session, user, games, complete=complete)
-            return len(games)
-
     @staticmethod
     def store_games(session, user, games, *, complete):
         entries = {entry.app_id: entry for entry in user.games}
@@ -110,7 +98,6 @@ class SteamLibrary:
                         name=row.get("name", f"Steam {app_id}"),
                         genres=[],
                         aliases=[],
-                        coop=False,
                     )
                 )
                 existing_games.add(app_id)
@@ -126,16 +113,6 @@ class SteamLibrary:
         if account:
             account.checked_at = utcnow()
             account.status = "library" if complete else "recent"
-
-    def mark_steam_checked(self, user_id: int, status="profile_only"):
-        if status not in {"profile_only", "error"}:
-            raise DomainError("Неизвестный результат проверки Steam")
-        with self.db.session.begin() as session:
-            user = session.get(User, user_id, with_for_update=True)
-            account = user.game_account("steam") if user else None
-            if account:
-                account.checked_at = utcnow()
-                account.status = status
 
     def disconnect_steam(self, user_id: int):
         with self.lock, self.db.session.begin() as session:

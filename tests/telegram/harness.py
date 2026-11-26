@@ -172,7 +172,7 @@ def photo_sizes(file_id="photo-original", file_size=200000):
     ]
 
 
-async def register(harness, telegram=1, with_photo=False):
+async def reach_registration_avatar(harness, telegram=1):
     await harness.update(telegram, "/start")
     assert "Имя или ник" in harness.sent()[-1].text
     await harness.update(telegram, "Алекс")
@@ -187,6 +187,10 @@ async def register(harness, telegram=1, with_photo=False):
         button.text for row in harness.sent()[-1].reply_markup.inline_keyboard for button in row
     ]
     assert avatar_options[:2] == ["Загрузить фото", "Выбрать стандартное"]
+
+
+async def register(harness, telegram=1, with_photo=False):
+    await reach_registration_avatar(harness, telegram)
     if with_photo:
         await harness.update(telegram, callback="photo:upload")
         await harness.update(telegram, photos=photo_sizes())

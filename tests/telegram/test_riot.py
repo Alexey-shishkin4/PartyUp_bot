@@ -1,7 +1,10 @@
+from datetime import timedelta
+
 import pytest
 
 from app.domain.errors import DomainError
-from app.domain.riot import LEAGUE_SOLO, VALORANT_ACT, VALORANT_RANKED_ACTS, RiotGame, RiotId, RiotStats
+from app.domain.riot import LEAGUE_SOLO, VALORANT_RANKED_ACTS, RiotGame, RiotId, RiotStats
+from app.persistence.models import utcnow
 from tests.telegram.harness import Harness
 
 
@@ -41,14 +44,16 @@ async def test_one_riot_id_links_both_games_and_disconnect_removes_both(service,
 
 
 @pytest.mark.asyncio
-async def test_failed_riot_refresh_keeps_last_saved_stats(service, users):
+async def test_failed_riot_refresh_keeps_last_saved_stats(service, users, monkeypatch):
     user = users(1001)
     identity = RiotId("Jett Main", "EUW")
     service.riot.save_account(
         user.id, identity,
-        {RiotGame.VALORANT: RiotStats(identity, "Gold 1", 18, VALORANT_ACT, "ugi", "eu")},
+        {RiotGame.VALORANT: RiotStats(identity, "Gold 1", 18, VALORANT_RANKED_ACTS, "ugi", "eu")},
         {game: None for game in RiotGame},
     )
+    later = utcnow() + timedelta(minutes=16)
+    monkeypatch.setattr("app.services.game_accounts.utcnow", lambda: later)
 
     async def fetch_riot(game, region, riot_id):
         assert riot_id == RiotId("Jett Main", "EUW")
@@ -61,30 +66,6 @@ async def test_failed_riot_refresh_keeps_last_saved_stats(service, users):
     await harness.update(1001, "/profile")
     assert "Valorant (Gold 1)" in harness.sent()[-1].text
     assert service.riot.get(user.id, RiotGame.VALORANT).matches_count == 18
-
-
-@pytest.mark.asyncio
-async def test_legacy_act_snapshot_can_be_refreshed_immediately(service, users):
-    user = users(1001)
-    riot_id = RiotId("Jett Main", "EUW")
-    service.riot.save_account(
-        user.id,
-        riot_id,
-        {RiotGame.VALORANT: RiotStats(riot_id, "Gold 1", None, VALORANT_ACT, "henrik", "eu")},
-        {game: None for game in RiotGame},
-    )
-
-    async def fetch_riot(game, region, account):
-        if game is RiotGame.LEAGUE:
-            raise DomainError("Профиль League of Legends не найден.")
-        assert (game, region, account) == (RiotGame.VALORANT, "eu", riot_id)
-        return RiotStats(account, "Gold 1", 187, VALORANT_RANKED_ACTS, "henrik", "eu")
-
-    harness = Harness(service, riot=fetch_riot)
-    await harness.update(1001, callback="accounts:refresh:riot")
-    assert service.riot.get(user.id, RiotGame.VALORANT).matches_count == 187
-    assert service.riot.get(user.id, RiotGame.VALORANT).scope == VALORANT_RANKED_ACTS
-    assert service.riot.get(user.id, RiotGame.LEAGUE) is None
 
 
 async def test_changing_riot_id_cascades_old_game_stats(service, users):
