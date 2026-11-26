@@ -244,7 +244,7 @@ async def test_configured_http_server_and_uploaded_photo(service, users, unused_
             async with client.get(f"{url}/photo/{peer.id}") as response:
                 assert response.content_type == "image/webp"
                 with Image.open(BytesIO(await response.read())) as image:
-                    assert image.width == 540 and image.height < 540
+                    assert image.size == (760, 534)
                 assert response.headers["Cache-Control"] == "no-store"
         assert downloads == ["uploaded-photo"]
         service.discovery.react(service.profiles.user_by_telegram(801).id, peer.id, "block")

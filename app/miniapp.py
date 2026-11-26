@@ -26,17 +26,18 @@ from .telegram.ui import MAX_PHOTO_SIZE, USERNAME_REQUIRED
 
 STATIC = ROOT / "static/miniapp"
 DECK = ("mira", "nika", "mark", "asya", "artem", "sonya")
+PORTRAIT_SIZE = (760, 1080)
 
 
 def thumbnail(data):
     with Image.open(BytesIO(data)) as source:
         if source.width * source.height > 36_000_000:
             raise ValueError("Photo dimensions exceed the thumbnail limit")
-        source.draft("RGB", (540, 540))
+        source.draft("RGB", PORTRAIT_SIZE)
         image = ImageOps.exif_transpose(source).convert("RGB")
-        image.thumbnail((540, 540), Image.Resampling.LANCZOS)
+        image.thumbnail(PORTRAIT_SIZE, Image.Resampling.LANCZOS)
         result = BytesIO()
-        image.save(result, "WEBP", quality=72)
+        image.save(result, "WEBP", quality=86)
         return result.getvalue()
 
 
