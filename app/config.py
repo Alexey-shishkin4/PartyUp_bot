@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     bot_token: str = ""
     steam_api_key: str = ""
+    deadlock_api_key: SecretStr = SecretStr("")
     api_fortnite_key: SecretStr = SecretStr("")
     api_fortnite_daily_limit: int = Field(default=10_000, ge=1)
     fortnite_api_key: SecretStr = SecretStr("")

@@ -8,6 +8,7 @@ from aiogram.utils.token import TokenValidationError, validate_token
 
 from app.config import Settings
 from app.integrations.faceit import FaceitClient
+from app.integrations.deadlock import DeadlockClient
 from app.integrations.fortnite import FortniteClient
 from app.integrations.opendota import OpenDotaClient
 from app.integrations.riot import RiotClient
@@ -62,6 +63,10 @@ async def run(settings: Settings):
             bot, dispatcher = build_bot(
                 services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch,
                 fetch_faceit_profile=faceit.fetch,
+            deadlock = DeadlockClient(client, settings.deadlock_api_key.get_secret_value())
+            bot, dispatcher = build_bot(
+                services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch,
+                fetch_deadlock_profile=deadlock.fetch,
             )
             try:
                 me = await bot.me()

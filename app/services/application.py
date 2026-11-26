@@ -2,6 +2,7 @@ from threading import RLock
 
 from app.persistence.database import Database
 
+from .deadlock import DeadlockProfiles
 from .discovery import DiscoveryService
 from .faceit import FaceitProfiles
 from .fortnite import FortniteProfiles
@@ -17,6 +18,7 @@ class Services:
         # Writes that span multiple queries share a lock in the polling process.
         self.lock = RLock()
         self.steam = SteamLibrary(db, self.lock)
+        self.deadlock = DeadlockProfiles(db, self.lock)
         self.fortnite = FortniteProfiles(db, self.lock)
         self.riot = RiotProfiles(db, self.lock)
         self.faceit = FaceitProfiles(db, self.lock)

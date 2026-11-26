@@ -6,6 +6,7 @@ from aiogram.fsm.storage.memory import SimpleEventIsolation
 from .cards import ProfileCards, profile_text
 from .feed import FeedView
 from .routers.common import build_common_router
+from .routers.deadlock import build_deadlock_router
 from .routers.developer import build_developer_router
 from .routers.discovery import build_discovery_router
 from .routers.faceit import build_faceit_router
@@ -22,6 +23,7 @@ from .ui import menu
 def build_bot(
     services, settings, fetch_steam_profile, fetch_fortnite_profile=None, fetch_riot_profile=None,
     *, fetch_faceit_profile=None,
+    *, fetch_deadlock_profile=None,
 ):
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher(storage=DatabaseStorage(services.db), events_isolation=SimpleEventIsolation())
@@ -47,6 +49,8 @@ def build_bot(
         private.include_router(build_riot_router(services.profiles, services.riot, fetch_riot_profile))
     if fetch_faceit_profile is not None:
         private.include_router(build_faceit_router(services.profiles, services.faceit, fetch_faceit_profile))
+    if fetch_deadlock_profile is not None:
+        private.include_router(build_deadlock_router(services.profiles, services.deadlock, fetch_deadlock_profile))
     private.include_router(build_fallback_router())
     dispatcher.include_router(private)
     return bot, dispatcher

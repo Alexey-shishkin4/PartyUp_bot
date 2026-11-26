@@ -5,6 +5,11 @@ CONTACT_NOTICE = "При взаимном лайке бот покажет со�
 MAX_PHOTO_SIZE = 10 * 1024 * 1024
 
 
+def playtime(minutes):
+    hours, remainder = divmod(minutes, 60)
+    return f"{hours} ч {remainder} мин" if hours else f"{remainder} мин"
+
+
 def buttons(rows):
     return InlineKeyboardMarkup(
         inline_keyboard=[

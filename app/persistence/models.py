@@ -202,3 +202,12 @@ class FaceitProfile(Base):
     checked_at: Mapped[datetime] = mapped_column(DateTime)
     steam_id: Mapped[str | None] = mapped_column(String(20))
     source: Mapped[str] = mapped_column(String(16), server_default="faceit")
+class DeadlockProfile(Base):
+    __tablename__ = "deadlock_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    steam_id: Mapped[str] = mapped_column(String(20))
+    rank_badge: Mapped[int]
+    ranked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    match_count: Mapped[int | None]
+    match_seconds: Mapped[int | None] = mapped_column(BigInteger)
+    checked_at: Mapped[datetime] = mapped_column(DateTime)
