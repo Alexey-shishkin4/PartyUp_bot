@@ -107,3 +107,27 @@ GitHub Actions запускает эти проверки с PostgreSQL 18 и Ch
 Telegram SDK и сетевые ответы Bot API в автотестах подменяются. Для ручной проверки на стенде
 откройте `/miniapp` с первого тестового аккаунта, поставьте лайк второму и ответьте через
 `/find` со второго. Проверьте контакт первого в `/matches` и второго на вкладке «Взаимности».
+
+### Замеры задержки
+
+С отдельного ПК, в том числе подключённого через мобильную сеть, можно сравнить доступные HTTPS-адреса.
+Замеры текущего PartyUp через `--live` запускаются на компьютере с ботом.
+
+```powershell
+uv run --locked --extra dev python -m scripts.bench_partyup --live --output ../partyup-benchmark/live
+uv run --locked --extra dev python -m scripts.bench_partyup --origin 'Tunnel=https://tunnel.example/miniapp' --origin 'Hosting=https://host.example/miniapp' --output ../partyup-benchmark/compare
+```
+
+Для авторизованных запросов и имитации обновлений Telegram укажите отдельную тестовую PostgreSQL
+в `PARTYUP_BENCH_DATABASE_URL`. Бенчмарк создаёт отдельную временную схему с синтетическими анкетами
+для каждого указанного размера и удаляет её после замеров. Chromium устанавливается командой
+`uv run --locked --extra dev playwright install chromium`. При наличии тестового HTTPS-туннеля
+к порту 8874 можно добавить `--lab-origin 'Lab tunnel=https://staging.example'`.
+
+```powershell
+uv run --locked --extra dev python -m scripts.bench_partyup --lab-profiles 100 500 --browser 8 --output ../partyup-benchmark/lab
+```
+
+В `samples.csv` записываются отдельные запросы, в `summary.json` — медиана, p95 и ошибки по каждому сценарию.
+Перцентили считаются по успешным запросам. `--live` проверяет публичные ресурсы и выполняет только
+чтение через Telegram Bot API. В лаборатории используется настоящий код бота и Mini App с подменой Telegram.
