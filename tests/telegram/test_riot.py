@@ -16,7 +16,7 @@ async def test_riot_commands_save_separate_profiles_and_delete_with_user(service
     async def fetch_riot(game, region, riot_id):
         calls.append((game, region, riot_id))
         if game is RiotGame.LEAGUE:
-            return RiotStats(riot_id, "Gold II", 19, LEAGUE_SOLO, "riot", "euw1")
+            return RiotStats(riot_id, "Gold II", 19, LEAGUE_SOLO, "iodid", "euw1")
         return RiotStats(riot_id, "Diamond 1", 24, VALORANT_RANKED_ACTS, "ugi", "eu")
 
     harness = Harness(service, riot=fetch_riot)
@@ -29,6 +29,7 @@ async def test_riot_commands_save_separate_profiles_and_delete_with_user(service
     await harness.update(1001, "/lol <Main>#EUW")
     assert "&lt;Main&gt;#EUW" in harness.sent()[-1].text
     assert "Матчи в Solo/Duo: 19" in harness.sent()[-1].text
+    assert "Источник: Iodid" in harness.sent()[-1].text
     await harness.update(1001, callback="riot:lol:refresh")
     await harness.update(1001, "/lol euw <Main>#EUW")
     assert "&lt;Main&gt;#EUW" in harness.sent()[-1].text
