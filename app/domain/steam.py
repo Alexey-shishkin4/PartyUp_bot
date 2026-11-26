@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
 
 
+STEAM_INDIVIDUAL_BASE = 76561197960265728
+
+
 @dataclass
 class PublicProfile:
     steam_id: str

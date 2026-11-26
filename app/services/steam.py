@@ -1,8 +1,8 @@
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.domain.dota import DOTA_APP_ID
 from app.domain.errors import DomainError
-from app.persistence.models import Game, User, UserGame, utcnow
+from app.persistence.models import DeadlockProfile, Game, User, UserGame, utcnow
 
 
 class SteamLibrary:
@@ -11,15 +11,17 @@ class SteamLibrary:
         self.lock = lock
 
     @staticmethod
-    def _link_public_steam(user, steam_id):
+    def _link_public_steam(session, user, steam_id):
         if not user or user.banned:
             raise DomainError("Добавление ссылки Steam недоступно")
         if user.steam_id != steam_id:
-            SteamLibrary._clear_steam_data(user)
+            SteamLibrary._clear_steam_data(session, user)
         user.steam_id = steam_id
 
     @staticmethod
-    def _clear_steam_data(user):
+    def _clear_steam_data(session, user):
+        if user.id is not None:
+            session.execute(delete(DeadlockProfile).where(DeadlockProfile.user_id == user.id))
         for entry in list(user.games):
             if entry.imported or entry.dota_match_minutes:
                 if entry.selected:
@@ -41,7 +43,7 @@ class SteamLibrary:
             self.store(session, user, profile)
 
     def store(self, session, user, profile):
-        self._link_public_steam(user, profile.steam_id)
+        self._link_public_steam(session, user, profile.steam_id)
         self._store_dota_stats(user, profile)
         if profile.coverage == "profile_only":
             user.steam_checked_at = utcnow()
@@ -129,4 +131,4 @@ class SteamLibrary:
             if not user:
                 raise DomainError("Анкета недоступна")
             user.steam_id = None
-            self._clear_steam_data(user)
+            self._clear_steam_data(session, user)

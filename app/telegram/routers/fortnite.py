@@ -10,7 +10,7 @@ from app.domain.errors import DomainError
 from app.domain.fortnite import MODE_LABELS
 from app.persistence.models import utcnow
 from app.telegram.states import FortniteForm
-from app.telegram.ui import buttons, require_profile
+from app.telegram.ui import buttons, playtime, require_profile
 
 MODE_NAMES = MODE_LABELS | {
     "reload_combined": "Reload (общий ранг)",
@@ -26,11 +26,6 @@ def mode_name(mode):
     if mode.startswith("team:") and mode not in MODE_NAMES:
         return "Другой формат команды"
     return escape(MODE_NAMES.get(mode, "Другой плейлист"))
-
-
-def playtime(minutes):
-    hours, remainder = divmod(minutes, 60)
-    return f"{hours} ч {remainder} мин" if hours else f"{remainder} мин"
 
 
 def profile_summary(profile):
