@@ -1,6 +1,11 @@
 [
-  {"app_id":730,"name":"Counter-Strike 2","genres":["Шутер","Тактика","Соревновательная"],"aliases":["CS2","CSGO","Counter-Strike Global Offensive","кс"],"coop":true},
-  {"app_id":570,"name":"Dota 2","genres":["MOBA","Тактика","Соревновательная"],"aliases":["дота"],"coop":true},
+  {"app_id":730,"name":"Counter-Strike 2","slug":"counter-strike-2","genres":["Шутер","Тактика","Соревновательная"],"aliases":["CS2","CSGO","Counter-Strike Global Offensive","кс"],"coop":true},
+  {"app_id":570,"name":"Dota 2","slug":"dota-2","genres":["MOBA","Тактика","Соревновательная"],"aliases":["дота"],"coop":true},
+  {"app_id":578080,"name":"PUBG","slug":"pubg","genres":["Шутер","Соревновательная"],"aliases":["PUBG: BATTLEGROUNDS","пабг"],"coop":true},
+  {"app_id":1422450,"name":"Deadlock","slug":"deadlock","genres":["MOBA","Шутер","Соревновательная"],"aliases":["дедлок"],"coop":true},
+  {"app_id":4294967296,"name":"Fortnite","slug":"fortnite","genres":["Шутер","Соревновательная"],"aliases":["фортнайт"],"coop":true},
+  {"app_id":4294967297,"name":"League of Legends","slug":"league-of-legends","genres":["MOBA","Соревновательная"],"aliases":["LoL","лол"],"coop":true},
+  {"app_id":4294967298,"name":"Valorant","slug":"valorant","genres":["Шутер","Тактика","Соревновательная"],"aliases":["валорант"],"coop":true},
   {"app_id":440,"name":"Team Fortress 2","genres":["Шутер","Командная"],"aliases":["TF2"],"coop":true},
   {"app_id":105600,"name":"Terraria","genres":["Песочница","Выживание","Приключения"],"aliases":["террария"],"coop":true},
   {"app_id":413150,"name":"Stardew Valley","genres":["Симулятор","Уютная","Песочница"],"aliases":["стардью"],"coop":true},

@@ -1,10 +1,7 @@
-from datetime import timedelta
-
 import pytest
 
 from app.domain.errors import DomainError
 from app.domain.riot import LEAGUE_SOLO, VALORANT_ACT, VALORANT_RANKED_ACTS, RiotGame, RiotId, RiotStats
-from app.persistence.models import RiotProfile, utcnow
 from tests.telegram.harness import Harness
 
 
@@ -28,9 +25,11 @@ async def test_one_riot_id_links_both_games_and_disconnect_removes_both(service,
     text = harness.sent()[-1].text
     assert "Valorant (Diamond 1)" in text and "League of Legends (Gold II)" in text
     assert "&lt;Main&gt;#EUW" not in text
-    assert service.riot.get(user.id, RiotGame.VALORANT).region == "eu"
-    assert service.riot.get(user.id, RiotGame.VALORANT).match_count == 24
-    assert service.riot.get(user.id, RiotGame.LEAGUE).match_count == 19
+    valorant = service.riot.get(user.id, RiotGame.VALORANT)
+    league = service.riot.get(user.id, RiotGame.LEAGUE)
+    assert valorant.account_id == league.account_id
+    assert valorant.details["region"] == "eu"
+    assert (valorant.matches_count, league.matches_count) == (24, 19)
     await harness.update(1001, callback="accounts:refresh:riot")
     assert set(calls) == {
         (RiotGame.VALORANT, None, RiotId("<Main>", "EUW")),
@@ -44,21 +43,12 @@ async def test_one_riot_id_links_both_games_and_disconnect_removes_both(service,
 @pytest.mark.asyncio
 async def test_failed_riot_refresh_keeps_last_saved_stats(service, users):
     user = users(1001)
-    with service.db.session.begin() as session:
-        session.add(
-            RiotProfile(
-                user_id=user.id,
-                game=RiotGame.VALORANT,
-                region="eu",
-                game_name="Jett Main",
-                tag_line="EUW",
-                match_scope=VALORANT_ACT,
-                match_count=18,
-                rank="Gold 1",
-                source="ugi",
-                checked_at=utcnow() - timedelta(hours=1),
-            )
-        )
+    identity = RiotId("Jett Main", "EUW")
+    service.riot.save_account(
+        user.id, identity,
+        {RiotGame.VALORANT: RiotStats(identity, "Gold 1", 18, VALORANT_ACT, "ugi", "eu")},
+        {game: None for game in RiotGame},
+    )
 
     async def fetch_riot(game, region, riot_id):
         assert riot_id == RiotId("Jett Main", "EUW")
@@ -70,7 +60,7 @@ async def test_failed_riot_refresh_keeps_last_saved_stats(service, users):
     assert "временно не удалось получить" in harness.sent()[-1].text
     await harness.update(1001, "/profile")
     assert "Valorant (Gold 1)" in harness.sent()[-1].text
-    assert service.riot.get(user.id, RiotGame.VALORANT).match_count == 18
+    assert service.riot.get(user.id, RiotGame.VALORANT).matches_count == 18
 
 
 @pytest.mark.asyncio
@@ -92,39 +82,32 @@ async def test_legacy_act_snapshot_can_be_refreshed_immediately(service, users):
 
     harness = Harness(service, riot=fetch_riot)
     await harness.update(1001, callback="accounts:refresh:riot")
-    assert service.riot.get(user.id, RiotGame.VALORANT).match_count == 187
-    assert service.riot.get(user.id, RiotGame.VALORANT).match_scope == VALORANT_RANKED_ACTS
+    assert service.riot.get(user.id, RiotGame.VALORANT).matches_count == 187
+    assert service.riot.get(user.id, RiotGame.VALORANT).scope == VALORANT_RANKED_ACTS
     assert service.riot.get(user.id, RiotGame.LEAGUE) is None
 
 
-async def test_legacy_separate_ids_are_preserved_until_user_changes_the_account(service, users, monkeypatch):
+async def test_changing_riot_id_cascades_old_game_stats(service, users):
     user = users(1)
-    with service.db.session.begin() as session:
-        for game, name, region, scope in (
-            (RiotGame.LEAGUE, "FirstOne", "ru", LEAGUE_SOLO),
-            (RiotGame.VALORANT, "SecondOne", "eu", VALORANT_RANKED_ACTS),
-        ):
-            session.add(RiotProfile(
-                user_id=user.id, game=game, game_name=name, tag_line="TAG", region=region,
-                match_scope=scope, rank="Gold I", source="henrik", checked_at=utcnow() - timedelta(hours=1),
-            ))
-
-    clock = 100
-    monkeypatch.setattr("app.telegram.routers.game_accounts.time", lambda: clock)
-    calls = []
+    identity = RiotId("OldName", "TAG")
+    service.riot.save_account(
+        user.id, identity, {
+            RiotGame.LEAGUE: RiotStats(identity, "Gold I", 19, LEAGUE_SOLO, "opgg", "ru"),
+            RiotGame.VALORANT: RiotStats(identity, "Gold I", 18, VALORANT_RANKED_ACTS, "henrik", "eu"),
+        },
+        {game: None for game in RiotGame},
+    )
+    old = service.riot.get(user.id, RiotGame.VALORANT)
 
     async def fetch(game, region, riot_id):
-        calls.append((game, region, riot_id))
         if game is RiotGame.VALORANT:
             raise DomainError("Профиль не найден.")
         return RiotStats(riot_id, "Diamond I", 10, LEAGUE_SOLO, "opgg", "ru")
 
     harness = Harness(service, riot=fetch)
-    await harness.update(1, callback="accounts:refresh:riot")
-    assert "разные Riot ID" in harness.sent()[-1].text and not calls
-    assert service.riot.get(user.id, RiotGame.VALORANT).game_name == "SecondOne"
-    clock += 20
     await harness.update(1, callback="accounts:change:riot")
     await harness.update(1, "NewOne#TAG")
-    assert service.riot.get(user.id, RiotGame.LEAGUE).game_name == "NewOne"
+    new = service.riot.get(user.id, RiotGame.LEAGUE)
+    assert new.account.display_name == "NewOne#TAG"
+    assert new.account_id != old.account_id
     assert service.riot.get(user.id, RiotGame.VALORANT) is None

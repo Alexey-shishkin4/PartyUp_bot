@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from app.domain.errors import DomainError
-from app.domain.faceit import FaceitStats
-from app.persistence.models import FaceitProfile, User, utcnow
+from app.domain.steam import CS2_APP_ID
+from app.persistence.game_stats import find_stats, replace_account, save_stats, writable_user
+from app.persistence.models import utcnow
 
 
 class FaceitProfiles:
@@ -10,41 +9,41 @@ class FaceitProfiles:
         self.db = db
         self.lock = lock
 
-    def get(self, user_id: int) -> FaceitProfile | None:
+    def get(self, user_id):
         with self.db.session() as session:
-            return session.get(FaceitProfile, user_id)
+            return find_stats(session, user_id, "faceit", CS2_APP_ID)
 
-    def save(
-        self, user_id: int, stats: FaceitStats, *, expected_checked_at: datetime | None, expected_steam_id=None,
-    ) -> FaceitProfile:
+    def save(self, user_id, stats, *, expected_checked_at, expected_steam_id=None):
         with self.lock, self.db.session.begin() as session:
-            user = session.get(User, user_id, with_for_update=True)
-            if not user or user.banned or user.is_test:
-                raise DomainError("Анкета недоступна.")
+            user = writable_user(session, user_id)
             if expected_steam_id is not None and user.steam_id != expected_steam_id:
                 raise DomainError("Привязка Steam изменилась. Открой «Добавить игры» ещё раз.")
-            profile = session.get(FaceitProfile, user_id)
-            if (profile.checked_at if profile else None) != expected_checked_at:
+            current = find_stats(session, user_id, "faceit", CS2_APP_ID)
+            if (current.checked_at if current else None) != expected_checked_at:
                 raise DomainError("Профиль FACEIT уже изменился. Открой «Добавить игры» ещё раз.")
-            if profile is None:
-                profile = FaceitProfile(user_id=user_id)
-                session.add(profile)
-            if stats.player_id != profile.player_id or stats.steam_id is not None:
-                profile.steam_id = stats.steam_id
-            profile.player_id = stats.player_id
-            profile.nickname = stats.nickname
-            profile.skill_level = stats.skill_level
-            profile.elo = stats.elo
-            profile.match_count = stats.match_count
-            profile.wins = stats.wins
-            profile.win_rate = stats.win_rate
-            profile.source = stats.source
-            profile.checked_at = utcnow()
-            return profile
+            return self.store(session, user, stats, checked_at=utcnow(), current=current)
 
-    def disconnect(self, user_id: int) -> None:
+    @staticmethod
+    def store(session, user, stats, *, checked_at, current=None):
+        account = replace_account(session, user, "faceit", stats.player_id)
+        account.display_name = stats.nickname
+        if stats.steam_id is not None:
+            account.details = {"steam_id": stats.steam_id}
+        account.checked_at = checked_at
+        row = save_stats(session, account, CS2_APP_ID, current)
+        row.rank = f"FACEIT {stats.skill_level}" if stats.skill_level is not None else None
+        row.matches_count = stats.match_count
+        row.source = stats.source
+        row.scope = "lifetime"
+        row.checked_at = account.checked_at
+        row.details = {
+            "elo": stats.elo, "skill_level": stats.skill_level, "wins": stats.wins, "win_rate": stats.win_rate,
+        }
+        return row
+
+    def disconnect(self, user_id):
         with self.lock, self.db.session.begin() as session:
-            if session.get(User, user_id, with_for_update=True):
-                profile = session.get(FaceitProfile, user_id)
-                if profile:
-                    session.delete(profile)
+            user = writable_user(session, user_id)
+            account = user.game_account("faceit")
+            if account:
+                user.accounts.remove(account)

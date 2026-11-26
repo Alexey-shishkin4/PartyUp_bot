@@ -31,8 +31,8 @@ class GameAccountFlow:
         self.profiles = profiles
         self.accounts = accounts
 
-    async def steam_attached(self, message, state, user, *, guide=True):
-        missing = await self.accounts.sync_steam(user)
+    async def steam_attached(self, message, state, user, *, guide=True, skip=()):
+        missing = await self.accounts.sync_steam(user, skip=skip)
         if missing:
             await message.answer("Пока не удалось обновить " + ", ".join(missing) + ". Можно повторить через «Добавить игры».")
         if guide:

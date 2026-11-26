@@ -1,8 +1,8 @@
-from datetime import datetime
-
-from app.domain.deadlock import DeadlockStats
+from app.domain.deadlock import rank_name
 from app.domain.errors import DomainError
-from app.persistence.models import DeadlockProfile, User, utcnow
+from app.domain.steam import DEADLOCK_APP_ID
+from app.persistence.game_stats import find_stats, save_stats, writable_user
+from app.persistence.models import utcnow
 
 
 class DeadlockProfiles:
@@ -10,38 +10,43 @@ class DeadlockProfiles:
         self.db = db
         self.lock = lock
 
-    def get(self, user_id: int, steam_id: str) -> DeadlockProfile | None:
+    def get(self, user_id, steam_id):
         with self.db.session() as session:
-            profile = session.get(DeadlockProfile, user_id)
-            return profile if profile and profile.steam_id == steam_id else None
+            row = find_stats(session, user_id, "steam", DEADLOCK_APP_ID)
+            return row if row and row.account.external_account_id == steam_id else None
 
-    def save(
-        self, user_id: int, steam_id: str, stats: DeadlockStats, *, expected_checked_at: datetime | None
-    ) -> DeadlockProfile:
+    def save(self, user_id, steam_id, stats, *, expected_checked_at):
         with self.lock, self.db.session.begin() as session:
-            user = session.get(User, user_id, with_for_update=True)
-            if not user or user.banned or user.is_test or user.steam_id != steam_id:
+            user = writable_user(session, user_id)
+            account = user.game_account("steam")
+            if not account or account.external_account_id != steam_id:
                 raise DomainError("Steam уже отключён или изменён. Открой «Добавить игры» ещё раз.")
-            profile = session.get(DeadlockProfile, user_id)
-            if profile and profile.steam_id != steam_id:
-                profile.match_count = profile.match_seconds = None
-            elif (profile.checked_at if profile else None) != expected_checked_at:
+            current = find_stats(session, user_id, "steam", DEADLOCK_APP_ID)
+            if (current.checked_at if current else None) != expected_checked_at:
                 raise DomainError("Статистика уже обновилась. Открой «Добавить игры» ещё раз.")
-            if profile is None:
-                profile = DeadlockProfile(user_id=user_id)
-                session.add(profile)
-            profile.steam_id = steam_id
-            profile.rank_badge = stats.rank_badge
-            profile.ranked_at = stats.ranked_at
-            if stats.match_count is not None:
-                profile.match_count = stats.match_count
-                profile.match_seconds = stats.match_seconds
-            profile.checked_at = utcnow()
-            return profile
+            return self.store(session, account, stats, checked_at=utcnow(), current=current)
 
-    def disconnect(self, user_id: int):
+    @staticmethod
+    def store(session, account, stats, *, checked_at, current=None):
+        row = save_stats(session, account, DEADLOCK_APP_ID, current)
+        row.rank = rank_name(stats.rank_badge)
+        row.source = "deadlock"
+        row.scope = "available_history"
+        row.checked_at = checked_at
+        details = row.details | {
+            "rank_badge": stats.rank_badge,
+            "ranked_at": stats.ranked_at.isoformat() if stats.ranked_at else None,
+        }
+        if stats.match_count is not None:
+            row.matches_count = stats.match_count
+            row.playtime_minutes = stats.match_seconds // 60 if stats.match_seconds is not None else None
+            details["match_seconds"] = stats.match_seconds
+        row.details = details
+        return row
+
+    def disconnect(self, user_id):
         with self.lock, self.db.session.begin() as session:
-            if session.get(User, user_id, with_for_update=True):
-                profile = session.get(DeadlockProfile, user_id)
-                if profile:
-                    session.delete(profile)
+            writable_user(session, user_id)
+            row = find_stats(session, user_id, "steam", DEADLOCK_APP_ID)
+            if row:
+                session.delete(row)

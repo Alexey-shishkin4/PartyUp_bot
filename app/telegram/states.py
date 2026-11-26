@@ -8,6 +8,7 @@ class Form(StatesGroup):
     games = State()
     game_source = State()
     registration_steam = State()
+    registration_game_account = State()
     steam_link = State()
     photo = State()
     review = State()

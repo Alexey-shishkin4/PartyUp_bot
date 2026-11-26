@@ -36,6 +36,11 @@ class PubgStats:
     ranking: PubgRanking | None
 
 
+def profile_rank(ranks, mode_seconds):
+    mode = max((mode for mode in MODES if mode in ranks), key=lambda mode: mode_seconds.get(mode, 0), default=None)
+    return ranks[mode].partition(" · ")[0] if mode else None
+
+
 def parse_account(value: str) -> tuple[str, str]:
     value = value.strip()
     parts = value.split(maxsplit=1)

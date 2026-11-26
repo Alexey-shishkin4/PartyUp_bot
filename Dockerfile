@@ -10,6 +10,8 @@ WORKDIR /app
 RUN useradd --create-home appuser
 COPY --from=build /app/.venv /app/.venv
 COPY app ./app
+COPY alembic.ini ./
+COPY migrations ./migrations
 COPY licenses ./licenses
 USER appuser
 CMD ["/app/.venv/bin/python", "-m", "app"]

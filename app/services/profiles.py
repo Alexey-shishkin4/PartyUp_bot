@@ -1,15 +1,20 @@
 from sqlalchemy import delete, select
 from sqlalchemy.orm import object_session
 
-from app.domain.dota import DOTA_APP_ID, dota_game_name
+from app.domain.dota import DOTA_APP_ID
 from app.domain.errors import DomainError
 from app.domain.matching import CARD_GAME_LIMIT, steam_card_game_ids
 from app.domain.profiles import PHOTO_UNCHANGED, PURPOSES, ProfileInput
 from app.domain.steam import CS2_APP_ID, DEADLOCK_APP_ID, PUBG_APP_ID
 from app.persistence.models import FSMRecord, Game, User, UserGame, utcnow
 
+from .deadlock import DeadlockProfiles
+from .faceit import FaceitProfiles
 from .fixture_catalog import fixture_definitions, fixture_photo
+from .fortnite import FortniteProfiles
 from .game_labels import read_game_labels
+from .pubg import PubgProfiles
+from .riot import RiotProfiles
 
 
 class ProfileService:
@@ -40,6 +45,7 @@ class ProfileService:
         share_username=None,
         changes=None,
         steam_profile=None,
+        game_links_draft=None,
         use_default_avatar=False,
         schedule_set=None,
         allow_empty_games=False,
@@ -76,12 +82,31 @@ class ProfileService:
                     setattr(user, key, value)
             if steam_profile is not None:
                 self.steam.store(session, user, steam_profile)
+            if creating and game_links_draft is not None:
+                if game_links_draft.riot is not None:
+                    riot = game_links_draft.riot
+                    RiotProfiles.store(session, user, riot.identity, riot.snapshots, checked_at=riot.checked_at)
+                if game_links_draft.fortnite is not None:
+                    FortniteProfiles.store(session, user, game_links_draft.fortnite)
+                if game_links_draft.pubg is not None:
+                    pubg = game_links_draft.pubg
+                    PubgProfiles.store(session, user, pubg.data, checked_at=pubg.checked_at)
+                if game_links_draft.faceit is not None:
+                    faceit = game_links_draft.faceit
+                    FaceitProfiles.store(session, user, faceit.data, checked_at=faceit.checked_at)
+                if game_links_draft.deadlock is not None:
+                    steam = user.game_account("steam")
+                    if steam is None:
+                        raise DomainError("Подключи Steam, чтобы сохранить Deadlock.")
+                    deadlock = game_links_draft.deadlock
+                    DeadlockProfiles.store(session, steam, deadlock.data, checked_at=deadlock.checked_at)
             if creating and test_profile and test_library:
                 self.steam.store_games(session, user, test_library, complete=True)
             if (
                 creating
                 and not allow_empty_games
                 and not profile.game_ids
+                and not (game_links_draft and game_links_draft.has_links)
                 and not any(entry.effective_minutes or entry.recent_minutes for entry in user.games)
             ):
                 raise DomainError("Выбери хотя бы одну игру или загрузи наигранные часы из Steam")
@@ -174,14 +199,12 @@ class ProfileService:
         )
         entries = {entry.app_id: entry for entry in user.games}
         card_games = [entries[app_id] for app_id in highlights] or selected[:CARD_GAME_LIMIT]
-        visible = {
-            entry.app_id: dota_game_name(entry.app_id, entry.game.name, user.dota_rank_tier) for entry in card_games
-        }
+        visible = {entry.app_id: entry.game.name for entry in card_games}
         if user.steam_id:
             for app_id in (DOTA_APP_ID, CS2_APP_ID, DEADLOCK_APP_ID, PUBG_APP_ID):
                 entry = entries.get(app_id)
                 if entry and app_id not in visible and (entry.effective_minutes or entry.recent_minutes):
-                    visible[app_id] = dota_game_name(app_id, entry.game.name, user.dota_rank_tier)
+                    visible[app_id] = entry.game.name
         for app_id, (name, rank) in linked_games.items():
             visible[app_id] = f"{name} ({rank})" if rank else name
         return {

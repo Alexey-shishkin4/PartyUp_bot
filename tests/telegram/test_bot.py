@@ -205,7 +205,7 @@ async def test_opendota_match_time_fills_missing_lifetime_with_recent_playtime(s
     assert service.profiles.public_profile(user)["games"][0] == "Dota 2 (Властелин I)"
     service.steam.disconnect_steam(user.id)
     user = service.profiles.user(user.id)
-    assert user.dota_rank_tier is None and not any(game.app_id == 570 for game in user.games)
+    assert user.game_account("steam") is None and not any(game.app_id == 570 for game in user.games)
 
 
 async def test_registration_with_unavailable_steam_library_keeps_manual_games(service):
@@ -482,7 +482,7 @@ async def test_failed_library_check_has_honest_status_and_short_retry(service,us
     assert "Библиотека уже обновлена" not in harness.sent()[-1].text
     assert parser.calls == 1
     with service.db.session.begin() as session:
-        session.get(User,user.id).steam_checked_at = utcnow() - timedelta(seconds=61)
+        session.get(User, user.id).game_account("steam").checked_at = utcnow() - timedelta(seconds=61)
     await harness.update(1,callback="steam:sync")
     assert parser.calls == 2
     await harness.bot.session.close()

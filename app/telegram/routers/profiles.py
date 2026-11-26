@@ -7,6 +7,8 @@ from aiogram.fsm.context import FSMContext
 from pydantic import ValidationError
 
 from app.domain.errors import DomainError
+from app.domain.faceit import FaceitLookup
+from app.domain.game_links_draft import GameLinksDraft
 from app.domain.profiles import PHOTO_UNCHANGED
 from app.domain.steam import PublicProfile
 from app.telegram.profile_form import FIELD_STEPS, ProfileForm
@@ -14,10 +16,26 @@ from app.telegram.states import Form
 from app.telegram.steam_ui import steam_attempt_allowed, steam_status_text
 from app.telegram.ui import MAX_PHOTO_SIZE, avatar_buttons, buttons, clear_buttons, menu, require_profile
 
+from .game_accounts import PROMPTS
+
 
 def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
     router = Router(name="profiles")
-    workflow = ProfileForm(profiles, cards)
+    accounts = game_flow.accounts
+    workflow = ProfileForm(profiles, cards, accounts.draft_providers)
+
+    async def prompt_draft_account(message, data):
+        name = data["draft_provider"]
+        rows = [[("← Назад", "draftgame:back")]]
+        if getattr(GameLinksDraft.from_state(data), name) is not None:
+            rows.insert(0, [("Убрать из черновика", f"draftgame:remove:{name}")])
+        if name in {"faceit", "deadlock"} and data.get("draft_steam"):
+            rows.insert(0, [("Использовать Steam", f"draftgame:steam:{name}")])
+        prompt = PROMPTS[name] if name != "deadlock" else "Загрузим ранг Deadlock из Steam, добавленного в черновик."
+        await message.answer(
+            prompt + "\n\nПривязка сохранится в анкете после публикации.",
+            reply_markup=buttons(rows),
+        )
 
     @router.message(CommandStart())
     async def start(message, state: FSMContext):
@@ -46,6 +64,13 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
             return
         if current == Form.registration_steam.state:
             await workflow.prompt_registration_steam(message)
+            return
+        if current == Form.registration_game_account.state:
+            data = await state.get_data()
+            if data.get("draft_provider") in accounts.draft_providers:
+                await prompt_draft_account(message, data)
+            else:
+                await workflow.review_profile(message, state)
             return
         if current == Form.review.state:
             await workflow.review_profile(message, state)
@@ -150,7 +175,8 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
         elif field == "publish":
             steam_profile = PublicProfile(**data["draft_steam"]) if data.get("draft_steam") else None
             try:
-                draft, _ = workflow.draft_profile(data)
+                links = GameLinksDraft.from_state(data)
+                draft, _ = workflow.draft_profile(data, links)
                 schedule_set = "start_hour" in data["form"] if data.get("new_registration") else None
                 user_id = profiles.save_profile(
                     callback.from_user.id,
@@ -159,6 +185,7 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
                     photo_file_id=data.get("draft_photo_file_id", PHOTO_UNCHANGED),
                     share_username=True,
                     steam_profile=steam_profile,
+                    game_links_draft=links,
                     use_default_avatar=data.get("draft_default_avatar", False),
                     schedule_set=schedule_set,
                     allow_empty_games=data.get("skip_games", False),
@@ -176,9 +203,96 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
             await message.answer("Анкета опубликована 💜" + extra, reply_markup=menu())
             user = profiles.user(user_id)
             if steam_profile:
-                await game_flow.steam_attached(message, state, user)
+                prepared = tuple(
+                    name for name in ("faceit", "deadlock")
+                    if data.get("draft_steam_hydrated") or getattr(links, name) is not None
+                )
+                await game_flow.steam_attached(message, state, user, skip=prepared)
             else:
                 await game_flow.begin(message, state, user)
+
+    @router.callback_query(
+        StateFilter(Form.game_source, Form.review),
+        F.data.in_({f"draftgame:{name}" for name in accounts.draft_providers}),
+    )
+    async def open_draft_account(callback, state: FSMContext):
+        await callback.answer()
+        if profiles.user_by_telegram(callback.from_user.id) is not None:
+            return
+        from_game_source = await state.get_state() == Form.game_source.state
+        name = callback.data.split(":")[1]
+        await clear_buttons(callback.message)
+        data = await state.update_data(
+            draft_provider=name, draft_from_game_source=from_game_source,
+        )
+        if name == "deadlock" and not data.get("draft_steam"):
+            await state.update_data(draft_check_deadlock=True)
+            await state.set_state(Form.registration_steam)
+            await callback.message.answer("Для Deadlock понадобится ссылка на Steam.")
+            await workflow.prompt_registration_steam(callback.message)
+            return
+        await state.set_state(Form.registration_game_account)
+        await prompt_draft_account(callback.message, data)
+
+    async def load_draft_account(message, state, name, identity, data):
+        if not await game_flow.attempt(message, state, name):
+            return
+        links = GameLinksDraft.from_state(data)
+        try:
+            missing = await accounts.link_draft(links, name, identity)
+        except DomainError as error:
+            await message.answer(escape(str(error)))
+            await prompt_draft_account(message, data)
+            return
+        await state.update_data(draft_game_links=links.model_dump(mode="json"))
+        if missing:
+            await message.answer("Пока не удалось получить данные для " + ", ".join(missing) + ".")
+        await workflow.review_profile(message, state)
+
+    @router.callback_query(Form.registration_game_account, F.data.startswith("draftgame:"))
+    async def draft_account_action(callback, state: FSMContext):
+        await callback.answer()
+        data = await state.get_data()
+        name = data.get("draft_provider")
+        steam = data.get("draft_steam")
+        show_source = data.get("draft_from_game_source")
+        if steam and name in {"faceit", "deadlock"} and callback.data == f"draftgame:steam:{name}":
+            steam_id = steam["steam_id"]
+            identity = FaceitLookup("steam_id", steam_id) if name == "faceit" else steam_id
+            await load_draft_account(callback.message, state, name, identity, data)
+            return
+        if name in accounts.draft_providers and callback.data == f"draftgame:remove:{name}":
+            links = GameLinksDraft.from_state(data)
+            setattr(links, name, None)
+            await state.update_data(draft_game_links=links.model_dump(mode="json"))
+            if not (links.has_links or data.get("selected") or data.get("skip_games")
+                    or workflow.draft_steam_highlights(data)):
+                show_source = True
+        elif callback.data != "draftgame:back":
+            return
+        await clear_buttons(callback.message)
+        if show_source:
+            await workflow.show_game_source(callback.message, state)
+        else:
+            await workflow.review_profile(callback.message, state)
+
+    @router.message(Form.registration_game_account, F.text, ~F.text.startswith("/"))
+    async def draft_account_identity(message, state: FSMContext):
+        data = await state.get_data()
+        name = data.get("draft_provider")
+        if name not in accounts.draft_providers:
+            await workflow.review_profile(message, state)
+            return
+        if name == "deadlock":
+            await prompt_draft_account(message, data)
+            return
+        try:
+            identity = accounts.parse_identity(name, message.text)
+        except DomainError as error:
+            await message.answer(escape(str(error)))
+            await prompt_draft_account(message, data)
+            return
+        await load_draft_account(message, state, name, identity, data)
 
     @router.message(Command("photo"))
     @router.message(F.text == "📷 Фото анкеты")
@@ -265,6 +379,7 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
         if not data.get("short_registration") or data.get("games_flow") == "edit":
             return
         await clear_buttons(callback.message)
+        await state.update_data(draft_check_deadlock=False)
         await state.set_state(Form.registration_steam)
         await workflow.prompt_registration_steam(callback.message)
 
@@ -278,6 +393,7 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
         if not data.get("short_registration") or data.get("games_flow") == "edit":
             return
         await clear_buttons(callback.message)
+        await state.update_data(draft_check_deadlock=False)
         if data.get("reviewed"):
             await workflow.review_profile(callback.message, state)
         else:
@@ -289,7 +405,14 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
     async def registration_games(callback, state: FSMContext):
         await callback.answer()
         await clear_buttons(callback.message)
-        await state.update_data(draft_steam=None)
+        data = await state.get_data()
+        links = GameLinksDraft.from_state(data)
+        if data.get("draft_steam"):
+            links.clear_steam_links(data["draft_steam"]["steam_id"])
+        await state.update_data(
+            draft_steam=None, draft_game_links=links.model_dump(mode="json"),
+            draft_check_deadlock=False, draft_steam_hydrated=False,
+        )
         await state.set_state(Form.games)
         await workflow.show_games(callback.message, state)
 
@@ -301,7 +424,7 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
         data = await state.get_data()
         if data.get("new_registration") and data.get("games_flow") != "edit":
             await clear_buttons(callback.message)
-            await state.update_data(skip_games=True)
+            await state.update_data(skip_games=True, draft_check_deadlock=False)
             await workflow.review_profile(callback.message, state)
 
     @router.message(Form.registration_steam, F.text, ~F.text.startswith("/"))
@@ -317,9 +440,17 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
             )
             return
         data = await state.get_data()
-        previous_ids = {row["appid"] for row in (data.get("draft_steam") or {}).get("games", [])}
+        previous = data.get("draft_steam") or {}
+        links = GameLinksDraft.from_state(data)
+        if previous.get("steam_id") and previous["steam_id"] != profile.steam_id:
+            links.clear_steam_links(previous["steam_id"])
+        missing = await accounts.sync_draft_steam(links, profile, check_deadlock=data.get("draft_check_deadlock", False))
+        previous_ids = {row["appid"] for row in previous.get("games", [])}
         selected = [app_id for app_id in data.get("selected", []) if app_id not in previous_ids]
-        data = await state.update_data(draft_steam=asdict(profile), selected=selected)
+        data = await state.update_data(
+            draft_steam=asdict(profile), selected=selected,
+            draft_game_links=links.model_dump(mode="json"), draft_check_deadlock=False, draft_steam_hydrated=True,
+        )
         has_playtime = bool(workflow.draft_steam_highlights(data))
         if profile.coverage == "profile_only":
             status = "Ссылка Steam принята. Steam не предоставил список игр и часы."
@@ -338,8 +469,10 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
             if has_playtime
             else " Можно продолжить с играми, выбранными вручную."
         )
+        if missing:
+            status += "\nПока не удалось получить данные для " + ", ".join(missing) + "."
         await message.answer(status)
-        if has_playtime:
+        if has_playtime or links.has_links:
             await workflow.review_profile(message, state)
         else:
             await state.set_state(Form.games)

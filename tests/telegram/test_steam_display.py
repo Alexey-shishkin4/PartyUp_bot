@@ -1,12 +1,17 @@
 from app.domain.matching import steam_card_game_ids
-from app.persistence.models import User
+from app.domain.steam import PublicProfile
 from app.telegram.cards import profile_text
 from app.telegram.steam_ui import steam_status_text
+
+STEAM_ID = "76561198000000001"
+STEAM_URL = f"https://steamcommunity.com/profiles/{STEAM_ID}"
 
 
 def test_steam_snapshot_appears_without_changing_manual_favorites(service,users):
     user = users(1,game_ids=[1245620])
-    service.steam.import_games(user.id,[{"appid":105600,"name":"Terraria","playtime_2weeks":60}],complete=False)
+    service.steam.save_public_steam(user.id, PublicProfile(
+        STEAM_ID, STEAM_URL, [{"appid": 105600, "name": "Terraria", "playtime_2weeks": 60}], "recent",
+    ))
     profile = service.profiles.public_profile(service.profiles.user(user.id))
     assert profile["games"] == ["Terraria"]
     assert profile["selected_games"] == ["ELDEN RING"]
@@ -50,7 +55,9 @@ def test_card_ranking_uses_recent_time_as_lower_bound_for_lifetime():
 
 def test_failed_check_preserves_visible_previous_games(service,users):
     user = users(1)
-    service.steam.import_games(user.id,[{"appid":570,"name":"Dota 2","playtime_2weeks":120}],complete=False)
+    service.steam.save_public_steam(user.id, PublicProfile(
+        STEAM_ID, STEAM_URL, [{"appid": 570, "name": "Dota 2", "playtime_2weeks": 120}], "recent",
+    ))
     service.steam.mark_steam_checked(user.id)
     profile = service.profiles.public_profile(service.profiles.user(user.id))
     assert "Dota 2" in profile["games"] and profile["steam_game_count"] == 1
@@ -69,9 +76,8 @@ def test_disconnect_clears_status_and_steam_display(service,users):
 
 def test_known_empty_library_is_distinct_from_failed_check(service,users):
     user = users(1)
-    service.steam.import_games(user.id,[])
+    service.steam.save_public_steam(user.id, PublicProfile(STEAM_ID, STEAM_URL, coverage="library"))
     profile = service.profiles.public_profile(service.profiles.user(user.id))
     assert steam_status_text(profile) == "Steam вернул пустую библиотеку."
-    with service.db.session.begin() as session:
-        session.get(User,user.id).steam_import_status = "profile_only"
+    service.steam.mark_steam_checked(user.id)
     assert "не загрузила список игр" in steam_status_text(service.profiles.public_profile(service.profiles.user(user.id)))

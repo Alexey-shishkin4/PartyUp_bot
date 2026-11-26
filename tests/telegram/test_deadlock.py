@@ -41,6 +41,6 @@ async def test_deadlock_card_displays_rank_and_match_time_stays_in_database(serv
     await harness.update(1001, callback="accounts:refresh:deadlock")
     assert calls == [STEAM_ID]
     row = service.deadlock.get(user.id, STEAM_ID)
-    assert (row.rank_badge, row.match_count, row.match_seconds) == (93, 5, 6060)
+    assert (row.details["rank_badge"], row.matches_count, row.details["match_seconds"]) == (93, 5, 6060)
     await harness.update(1001, callback="steam:disconnect")
     assert service.deadlock.get(user.id, STEAM_ID) is None

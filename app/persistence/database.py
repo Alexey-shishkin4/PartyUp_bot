@@ -1,13 +1,15 @@
 import json
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import URL, create_engine, inspect, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
-from app.config import RESOURCES
+from app.config import RESOURCES, ROOT
 
-from .models import Base, Game
+from .models import Game
 
 
 class Database:
@@ -22,19 +24,18 @@ class Database:
 
     def initialize(self):
         catalog = json.loads((RESOURCES / "catalog.json").read_text(encoding="utf-8"))
+        catalog = [{"slug": f"steam-{game['app_id']}", **game} for game in catalog]
         with self.engine.begin() as connection:
             # Serialize first-time schema creation for this application and schema.
             connection.exec_driver_sql(
                 "SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('partyup'))"
             )
-            Base.metadata.create_all(connection)
-            faceit_columns = {column["name"] for column in inspect(connection).get_columns("faceit_profiles")}
-            if not {"steam_id", "source"} <= faceit_columns:
-                connection.exec_driver_sql(
-                    "ALTER TABLE faceit_profiles "
-                    "ADD COLUMN IF NOT EXISTS steam_id VARCHAR(20), "
-                    "ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'faceit'"
-                )
+            schema = inspect(connection)
+            if schema.has_table("users") and not schema.has_table("alembic_version"):
+                raise RuntimeError("Обнаружена старая схема PartyUp. Для первой миграции нужна пустая PostgreSQL.")
+            config = Config(str(ROOT / "alembic.ini"))
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
             connection.execute(
                 insert(Game).values(catalog).on_conflict_do_nothing(index_elements=[Game.app_id])
             )
