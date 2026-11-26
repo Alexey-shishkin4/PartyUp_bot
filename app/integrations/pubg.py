@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import re
 from collections import deque
 from math import isfinite
@@ -10,12 +9,13 @@ import httpx
 from app.domain.errors import DomainError
 from app.domain.pubg import ACCOUNT_ID, MODES, PLATFORMS, PubgAccount, PubgPlaytime, PubgRanking, PubgStats
 
+from .http import api_skipped, read_json, request_api
+
 
 OFFICIAL = "https://api.pubg.com/shards"
 PUBLIC = "https://pubg-api.org/api"
 PUBLIC_PLATFORMS = {"steam", "kakao"}
 SEASON_ID = re.compile(r"division\.bro\.official\.[a-z0-9-]{1,64}")
-log = logging.getLogger(__name__)
 
 
 class PubgAPIError(Exception):
@@ -96,7 +96,7 @@ class PubgClient:
             elif ACCOUNT_ID.fullmatch(nickname):
                 if not self.api_key:
                     raise DomainError("Для поиска по PUBG Account ID нужен ключ API. Попробуй указать игровой ник.")
-                payload = await self.get("official", f"/{platform}/players/{nickname}")
+                payload = await self.get("official", "player_by_id", f"/{platform}/players/{nickname}")
                 account = self.player_identity(payload.get("data"), platform, account_id=nickname)
             else:
                 account = await self.player(platform, nickname)
@@ -127,12 +127,16 @@ class PubgClient:
     async def player(self, platform: str, nickname: str) -> PubgAccount:
         if platform in PUBLIC_PLATFORMS:
             try:
-                player = await self.get("public", "/players", {"platform": platform, "playerName": nickname})
+                player = await self.get(
+                    "public", "player_search", "/players", {"platform": platform, "playerName": nickname}
+                )
                 return self.player_identity(player, platform, nickname)
             except PubgAPIError:
                 if not self.api_key:
                     raise
-        payload = await self.get("official", f"/{platform}/players", {"filter[playerNames]": nickname})
+        payload = await self.get(
+            "official", "player_search", f"/{platform}/players", {"filter[playerNames]": nickname}
+        )
         data = payload.get("data")
         if not isinstance(data, list):
             raise PubgAPIError()
@@ -163,14 +167,15 @@ class PubgClient:
         if account.platform in PUBLIC_PLATFORMS:
             try:
                 payload = await self.get(
-                    "public", "/lifetime/stats", {"platform": account.platform, "accountId": account.account_id}
+                    "public", "lifetime_stats", "/lifetime/stats",
+                    {"platform": account.platform, "accountId": account.account_id},
                 )
                 return PubgPlaytime(lifetime_seconds(payload, account.account_id), "public")
             except PubgAPIError:
                 if not self.api_key:
                     raise
         payload = await self.get(
-            "official", f"/{account.platform}/players/{account.account_id}/seasons/lifetime"
+            "official", "lifetime_stats", f"/{account.platform}/players/{account.account_id}/seasons/lifetime"
         )
         return PubgPlaytime(lifetime_seconds(payload, account.account_id), "official")
 
@@ -179,7 +184,8 @@ class PubgClient:
             try:
                 season = await self.current_season(account.platform)
                 payload = await self.get(
-                    "official", f"/{account.platform}/players/{account.account_id}/seasons/{season}/ranked"
+                    "official", "ranked_stats",
+                    f"/{account.platform}/players/{account.account_id}/seasons/{season}/ranked",
                 )
                 attrs = object_value(object_value(payload.get("data")).get("attributes"))
                 return PubgRanking(current_ranks(attrs.get("rankedGameModeStats")), "official", season)
@@ -187,7 +193,8 @@ class PubgClient:
                 if account.platform not in PUBLIC_PLATFORMS:
                     raise
         payload = await self.get(
-            "public", "/stats/rank", {"platform": account.platform, "playerName": account.nickname}
+            "public", "ranked_stats", "/stats/rank",
+            {"platform": account.platform, "playerName": account.nickname},
         )
         if not (payload.keys() & set(MODES) or isinstance(payload.get("banType"), str)):
             raise PubgAPIError()
@@ -198,7 +205,7 @@ class PubgClient:
             cached = self.seasons.get(platform)
             if cached and monotonic() < cached[0]:
                 return cached[1]
-            payload = await self.get("official", f"/{platform}/seasons")
+            payload = await self.get("official", "seasons", f"/{platform}/seasons")
             seasons = payload.get("data")
             if not isinstance(seasons, list):
                 raise PubgAPIError()
@@ -211,14 +218,17 @@ class PubgClient:
                         return season_id
             raise PubgAPIError()
 
-    async def get(self, provider: str, path: str, params=None) -> dict:
+    async def get(self, provider: str, operation: str, path: str, params=None) -> dict:
+        log_provider = f"pubg_{provider}"
         now = monotonic()
         if now < self.cooldowns.get(provider, 0):
+            api_skipped(log_provider, operation, "cooldown")
             raise PubgAPIError(429)
         if provider == "official":
             while self.official_requests and now - self.official_requests[0] >= 60:
                 self.official_requests.popleft()
             if len(self.official_requests) >= self.requests_per_minute:
+                api_skipped(log_provider, operation, "request_budget")
                 raise PubgAPIError(429)
             self.official_requests.append(now)
             url = OFFICIAL + path
@@ -227,7 +237,10 @@ class PubgClient:
             url = PUBLIC + path
             headers = {"Accept": "application/json"}
         try:
-            response = await self.http.get(url, params=params, headers=headers, follow_redirects=False, timeout=8)
+            response = await request_api(
+                self.http, log_provider, operation, "GET", url,
+                params=params, headers=headers, follow_redirects=False, timeout=8,
+            )
             if response.status_code == 429 or (
                 provider == "official" and response.headers.get("X-RateLimit-Remaining") == "0"
             ):
@@ -238,12 +251,10 @@ class PubgClient:
                     delay = max(1, int(reset) - time())
                 self.cooldowns[provider] = max(self.cooldowns.get(provider, 0), monotonic() + max(1, delay))
             response.raise_for_status()
-            return object_value(response.json())
+            return read_json(response, dict)
         except httpx.HTTPStatusError as error:
-            log.info("PUBG %s returned HTTP %s", provider, error.response.status_code)
             raise PubgAPIError(error.response.status_code) from None
-        except (httpx.RequestError, ValueError) as error:
-            log.info("PUBG %s request failed (%s)", provider, type(error).__name__)
+        except (httpx.RequestError, httpx.InvalidURL, ValueError):
             raise PubgAPIError() from None
 
     @staticmethod

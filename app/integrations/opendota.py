@@ -5,6 +5,8 @@ import httpx
 
 from app.domain.steam import STEAM_INDIVIDUAL_BASE
 
+from .http import api_skipped, read_json, request_api
+
 
 MATCHMAKING_MINUTES = 7
 PLAYTIME_MULTIPLIER = 1.5
@@ -23,19 +25,21 @@ class OpenDotaClient:
 
     async def _get(self, account_id, suffix=""):
         try:
-            response = await self.client.get(
+            response = await request_api(
+                self.client, "opendota", "totals" if suffix else "player", "GET",
                 f"https://api.opendota.com/api/players/{account_id}{suffix}",
                 timeout=6,
                 follow_redirects=False,
             )
             response.raise_for_status()
-            return response.json()
-        except (httpx.HTTPError, ValueError):
+            return read_json(response, list if suffix else dict)
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
             return None
 
     async def stats(self, steam_id: str, *, need_duration: bool) -> DotaStats:
         account_id = int(steam_id) - STEAM_INDIVIDUAL_BASE
         if not 0 < account_id < 2**32:
+            api_skipped("opendota", "player", "invalid_steam_id")
             return DotaStats()
         if need_duration:
             profile, totals = await asyncio.gather(self._get(account_id), self._get(account_id, "/totals"))

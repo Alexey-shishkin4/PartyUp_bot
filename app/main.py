@@ -1,9 +1,10 @@
 import asyncio
 import logging
+import sys
 from functools import partial
 
 import httpx
-from aiogram.exceptions import TelegramAPIError, TelegramUnauthorizedError
+from aiogram.exceptions import ClientDecodeError, TelegramAPIError, TelegramUnauthorizedError
 from aiogram.utils.token import TokenValidationError, validate_token
 
 from app.config import Settings
@@ -78,7 +79,7 @@ async def run(settings: Settings):
                 await run_polling(bot, dispatcher, settings, services.discovery)
             except TelegramUnauthorizedError:
                 raise SystemExit("Telegram отклонил BOT_TOKEN. Проверьте токен в @BotFather.") from None
-            except TelegramAPIError as error:
+            except (TelegramAPIError, ClientDecodeError) as error:
                 raise SystemExit(f"Не удалось запустить Telegram polling ({type(error).__name__}).") from None
             finally:
                 await bot.session.close()
@@ -87,7 +88,7 @@ async def run(settings: Settings):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stdout)
     # HTTP request URLs can include the Steam API key.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

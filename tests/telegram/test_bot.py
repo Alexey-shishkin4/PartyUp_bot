@@ -1,5 +1,6 @@
 
 import httpx
+import pytest
 from aiogram.methods import AnswerCallbackQuery, EditMessageMedia, EditMessageText
 from aiogram.types import Document, FSInputFile
 from sqlalchemy import func, select
@@ -162,7 +163,8 @@ async def test_registration_imports_steam_and_shows_best_candidate(service, user
     assert not any(game.selected for game in user.games)
 
 
-async def test_opendota_match_time_fills_missing_lifetime_with_recent_playtime(service):
+@pytest.mark.parametrize("steam_lists_dota", [True, False])
+async def test_opendota_recovers_match_time_without_lifetime_playtime(service, steam_lists_dota):
     def response(request):
         path = request.url.path
         if request.url.host == "api.opendota.com":
@@ -171,9 +173,10 @@ async def test_opendota_match_time_fills_missing_lifetime_with_recent_playtime(s
             assert path == "/api/players/256878545/totals"
             return httpx.Response(200, json=[{"field":"duration", "sum":1556196, "n":647}])
         if path == "/IPlayerService/GetRecentlyPlayedGames/v1/":
-            return httpx.Response(200, json={"response": {"total_count": 1, "games": [
+            games = [
                 {"appid": 570, "name": "Dota 2", "playtime_2weeks": 90},
-            ]}})
+            ] if steam_lists_dota else []
+            return httpx.Response(200, json={"response": {"total_count": len(games), "games": games}})
         assert path == "/IPlayerService/GetOwnedGames/v1/"
         return httpx.Response(200, json={"response":{"game_count":1, "games":[
             {"appid":730, "name":"Counter-Strike 2", "playtime_forever":3600},
@@ -197,9 +200,9 @@ async def test_opendota_match_time_fills_missing_lifetime_with_recent_playtime(s
 
     user = service.profiles.user_by_telegram(1)
     dota = next(game for game in user.games if game.app_id == 570)
-    assert dota.minutes == 0 and dota.dota_match_minutes == 45698 and dota.imported
+    assert dota.minutes == 0 and dota.dota_match_minutes == 45698 and dota.imported is steam_lists_dota
     assert weights(user)[570] > weights(user)[730]
-    assert service.profiles.public_profile(user)["steam_game_count"] == 2
+    assert service.profiles.public_profile(user)["steam_game_count"] == (2 if steam_lists_dota else 1)
     assert service.profiles.public_profile(user)["games"][0] == "Dota 2 (Властелин I)"
     service.steam.disconnect_steam(user.id)
     user = service.profiles.user(user.id)

@@ -424,7 +424,7 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
             draft_steam=asdict(profile), selected=selected,
             draft_game_links=links.model_dump(mode="json"), draft_check_deadlock=False,
         )
-        has_playtime = bool(workflow.draft_steam_highlights(data))
+        has_steam_games = bool(workflow.draft_steam_highlights(data))
         if profile.coverage == "profile_only":
             status = "Ссылка Steam принята. Steam не предоставил список игр и часы."
         else:
@@ -439,13 +439,13 @@ def build_profile_router(profiles, cards, fetch_steam_profile, game_flow):
             status += " Для Dota 2 учтена оценка наигрыша по данным OpenDota."
         status += (
             " Бот сам выбрал игры для карточки."
-            if has_playtime
+            if has_steam_games
             else " Можно продолжить с играми, выбранными вручную."
         )
         if missing:
             status += "\nПока не удалось получить данные для " + ", ".join(missing) + "."
         await message.answer(status)
-        if has_playtime or links.has_links:
+        if has_steam_games or links.has_links:
             await workflow.review_profile(message, state)
         else:
             await state.set_state(Form.games)

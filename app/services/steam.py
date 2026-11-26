@@ -55,15 +55,21 @@ class SteamLibrary:
         minutes = profile.dota_match_minutes
         if profile.dota_rank_checked or minutes is not None:
             current = find_stats(session, user.id, "steam", DOTA_APP_ID)
-            row = save_stats(session, account, DOTA_APP_ID, current)
-            row.source = "opendota"
-            row.scope = "available_history"
-            row.checked_at = utcnow()
-            if profile.dota_rank_checked:
-                row.rank = dota_rank_name(profile.dota_rank_tier)
-                row.details = {"rank_tier": profile.dota_rank_tier}
-            if minutes is not None:
-                row.playtime_minutes = minutes
+            rank = dota_rank_name(profile.dota_rank_tier)
+            steam_has_playtime = any(
+                game["appid"] == DOTA_APP_ID and (game.get("playtime_forever") or game.get("playtime_2weeks"))
+                for game in profile.games
+            )
+            if current is not None or rank or minutes or steam_has_playtime:
+                row = save_stats(session, account, DOTA_APP_ID, current)
+                row.source = "opendota"
+                row.scope = "available_history"
+                row.checked_at = utcnow()
+                if profile.dota_rank_checked:
+                    row.rank = rank
+                    row.details = {"rank_tier": profile.dota_rank_tier}
+                if minutes is not None:
+                    row.playtime_minutes = minutes
         if minutes is None:
             return
         entry = next((game for game in user.games if game.app_id == DOTA_APP_ID), None)

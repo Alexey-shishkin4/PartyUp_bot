@@ -18,6 +18,8 @@ from app.domain.riot import (
 )
 from app.integrations.opgg import ranked_profile as opgg_ranked_profile
 
+from .http import api_skipped, read_json, request_api
+
 UGI_URL = "https://api.ugilabs.com"
 HENRIK_URL = "https://api.henrikdev.xyz"
 IODID_URL = "https://api.safjnest.com/api/lol"
@@ -187,19 +189,25 @@ class RiotClient:
     def response_error(self, provider: str, response: httpx.Response) -> RiotAPIError:
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After", "")
-            delay = max(1, int(retry_after)) if retry_after.isascii() and retry_after.isdecimal() else 60
+            delay = (
+                max(1, int(retry_after))
+                if len(retry_after) <= 9 and retry_after.isascii() and retry_after.isdecimal() else 60
+            )
             self.cooldowns[provider] = monotonic() + delay
         return RiotAPIError(response.status_code)
 
-    async def get(self, provider: str, url: str, headers: dict[str, str]):
+    async def get(self, provider: str, operation: str, url: str, headers: dict[str, str], *, expected: type = dict):
         if monotonic() < self.cooldowns.get(provider, 0):
+            api_skipped(provider, operation, "cooldown")
             raise RiotAPIError(429)
         try:
-            response = await self.http.get(url, headers=headers, follow_redirects=False, timeout=8)
+            response = await request_api(
+                self.http, provider, operation, "GET", url, headers=headers, follow_redirects=False, timeout=8
+            )
             if not response.is_success or response.status_code == 202:
                 raise self.response_error(provider, response)
-            return response.json()
-        except (httpx.RequestError, ValueError):
+            return read_json(response, expected)
+        except (httpx.RequestError, httpx.InvalidURL, ValueError):
             raise RiotAPIError() from None
 
     @staticmethod
@@ -222,6 +230,7 @@ class RiotClient:
                 payload = as_object(
                     await self.get(
                         "henrik",
+                        "valorant_account",
                         f"{HENRIK_URL}/valorant/v2/account/{segments}",
                         {"Authorization": self.henrik_key},
                     )
@@ -233,7 +242,9 @@ class RiotClient:
             try:
                 _, puuid = await self.riot_account(segments)
                 shard = as_object(
-                    await self.riot_get(f"{RIOT_ACCOUNT_URL}/active-shards/by-game/val/by-puuid/{puuid}")
+                    await self.riot_get(
+                        "valorant_region", f"{RIOT_ACCOUNT_URL}/active-shards/by-game/val/by-puuid/{puuid}"
+                    )
                 )
                 return read_region(RiotGame.VALORANT, shard.get("activeShard"))
             except RiotAPIError as error:
@@ -287,6 +298,7 @@ class RiotClient:
         payload = as_object(
             await self.get(
                 "ugi",
+                "valorant_match_history",
                 f"{UGI_URL}/v1/matches/{region}/{segments}?size=1",
                 {"Authorization": f"Bearer {self.ugi_key}"},
             )
@@ -304,6 +316,7 @@ class RiotClient:
         payload = as_object(
             await self.get(
                 "ugi",
+                "valorant_rank",
                 f"{UGI_URL}/v1/rank/{region}/{segments}",
                 {"Authorization": f"Bearer {self.ugi_key}"},
             )
@@ -324,6 +337,7 @@ class RiotClient:
         payload = as_object(
             await self.get(
                 "henrik",
+                "valorant_mmr",
                 f"{HENRIK_URL}/valorant/v3/mmr/{region}/pc/{segments}",
                 {"Authorization": self.henrik_key},
             )
@@ -337,12 +351,13 @@ class RiotClient:
 
     async def opgg(self, region: str, riot_id: RiotId) -> RiotStats:
         if monotonic() < self.cooldowns.get("opgg", 0):
+            api_skipped("opgg", "summoner_profile", "cooldown")
             raise RiotAPIError(429)
         try:
             ranked, profile_updated = await opgg_ranked_profile(self.http, region, riot_id)
         except httpx.HTTPStatusError as error:
             raise self.response_error("opgg", error.response) from None
-        except (httpx.RequestError, ValueError):
+        except (httpx.RequestError, httpx.InvalidURL, ValueError):
             raise RiotAPIError() from None
         queue = next((item for item in (LEAGUE_SOLO, LEAGUE_FLEX) if item in ranked), LEAGUE_SOLO)
         entry = ranked.get(queue)
@@ -358,9 +373,7 @@ class RiotClient:
         params = {"q": requested_id}
         if region is not None:
             params["shard"] = region.upper()
-        results = await self.get("iodid", f"{IODID_URL}/search?{urlencode(params)}", {})
-        if not isinstance(results, list):
-            raise RiotAPIError()
+        results = await self.get("iodid", "summoner_search", f"{IODID_URL}/search?{urlencode(params)}", {}, expected=list)
         profiles = []
         for result in results:
             view = as_object(result)
@@ -386,7 +399,7 @@ class RiotClient:
             return stats
 
         puuid = read_puuid(summoner)
-        profile = as_object(await self.get("iodid", f"{IODID_URL}/{platform.upper()}/profile/{puuid}", {}))
+        profile = await self.get("iodid", "summoner_profile", f"{IODID_URL}/{platform.upper()}/profile/{puuid}", {})
         identity = as_object(profile.get("summoner"))
         if (
             read_puuid(identity) != puuid
@@ -402,25 +415,25 @@ class RiotClient:
             raise RiotAPIError(202)
         return RiotStats(account, None, None, LEAGUE_SOLO, "iodid", platform)
 
-    async def riot_get(self, url: str):
-        return await self.get("riot", url, {"X-Riot-Token": self.riot_key})
+    async def riot_get(self, operation: str, url: str, *, expected: type = dict):
+        return await self.get("riot", operation, url, {"X-Riot-Token": self.riot_key}, expected=expected)
 
     async def riot_account(self, segments: str) -> tuple[RiotId, str]:
-        account = as_object(await self.riot_get(f"{RIOT_ACCOUNT_URL}/accounts/by-riot-id/{segments}"))
+        account = await self.riot_get("account", f"{RIOT_ACCOUNT_URL}/accounts/by-riot-id/{segments}")
         riot_id = read_riot_id(account, "gameName", "tagLine")
         return riot_id, read_puuid(account)
 
     async def league(self, region: str | None, segments: str) -> RiotStats:
         riot_id, puuid = await self.riot_account(segments)
         if region is None:
-            account_region = as_object(
-                await self.riot_get(f"{RIOT_ACCOUNT_URL}/region/by-game/lol/by-puuid/{puuid}")
+            account_region = await self.riot_get(
+                "league_region", f"{RIOT_ACCOUNT_URL}/region/by-game/lol/by-puuid/{puuid}"
             )
             region = read_region(RiotGame.LEAGUE, account_region.get("region"))
         platform_url = f"https://{region}.api.riotgames.com"
-        data = await self.riot_get(f"{platform_url}/lol/league/v4/entries/by-puuid/{puuid}")
-        if not isinstance(data, list):
-            raise RiotAPIError()
+        data = await self.riot_get(
+            "league_ranked_entries", f"{platform_url}/lol/league/v4/entries/by-puuid/{puuid}", expected=list
+        )
         queues = {}
         for item in data:
             entry = as_object(item)
@@ -433,5 +446,5 @@ class RiotClient:
                 division = text_field(entry.get("rank"), 8)
                 return league_rank_stats(riot_id, region, queue, entry, tier, division, "riot")
         # Account-V1 is global. An empty list alone cannot confirm the LoL server.
-        await self.riot_get(f"{platform_url}/lol/summoner/v4/summoners/by-puuid/{puuid}")
+        await self.riot_get("league_summoner", f"{platform_url}/lol/summoner/v4/summoners/by-puuid/{puuid}")
         return RiotStats(riot_id, None, None, LEAGUE_SOLO, "riot", region)

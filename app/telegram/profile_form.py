@@ -4,7 +4,7 @@ from html import escape
 from aiogram.types import FSInputFile
 from pydantic import ValidationError
 
-from app.domain.dota import DOTA_APP_ID, dota_game_name
+from app.domain.dota import DOTA_APP_ID, dota_game_name, dota_rank_name
 from app.domain.errors import DomainError
 from app.domain.game_links_draft import GameLinksDraft
 from app.domain.matching import CARD_GAME_LIMIT, steam_card_game_ids
@@ -277,7 +277,10 @@ class ProfileForm:
         dota = played.get(DOTA_APP_ID, (DOTA_APP_ID, 0, 0))
         if steam.get("dota_match_minutes") and dota[1] == 0:
             played[DOTA_APP_ID] = (DOTA_APP_ID, steam["dota_match_minutes"], dota[2])
-        return steam_card_game_ids(played.values())
+        games = steam_card_game_ids(played.values())
+        if DOTA_APP_ID not in games and dota_rank_name(steam.get("dota_rank_tier")):
+            games.append(DOTA_APP_ID)
+        return games
 
     def draft_profile(self, data, links):
         highlights = self.draft_steam_highlights(data)

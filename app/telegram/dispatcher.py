@@ -5,6 +5,7 @@ from aiogram.fsm.storage.memory import SimpleEventIsolation
 
 from app.services.game_accounts import GameAccounts
 
+from .api_logging import log_telegram_request
 from .cards import ProfileCards, profile_text
 from .feed import FeedView
 from .routers.common import build_common_router
@@ -27,6 +28,7 @@ def build_bot(
     fetch_deadlock_profile=None,
 ):
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    bot.session.middleware.register(log_telegram_request)
     dispatcher = Dispatcher(storage=DatabaseStorage(services.db), events_isolation=SimpleEventIsolation())
     cards = ProfileCards(services.profiles)
     feed_view = FeedView(services.discovery, cards)
