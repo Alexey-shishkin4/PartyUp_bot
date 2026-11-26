@@ -9,6 +9,7 @@ from aiogram.utils.token import TokenValidationError, validate_token
 from app.config import Settings
 from app.integrations.fortnite import FortniteClient
 from app.integrations.opendota import OpenDotaClient
+from app.integrations.pubg import PubgClient
 from app.integrations.riot import RiotClient
 from app.integrations.steam import SteamClient
 from app.integrations.steam_public import PublicSteamParser
@@ -54,7 +55,13 @@ async def run(settings: Settings):
                 henrik_key=settings.henrikdev_api_key.get_secret_value(),
                 riot_key=settings.riot_api_key.get_secret_value(),
             )
-            bot, dispatcher = build_bot(services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch)
+            pubg = PubgClient(
+                client, settings.pubg_api_key.get_secret_value(),
+                requests_per_minute=settings.pubg_api_requests_per_minute,
+            )
+            bot, dispatcher = build_bot(
+                services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch, fetch_pubg_profile=pubg.fetch
+            )
             try:
                 me = await bot.me()
                 log.info("PartyUp запущен как @%s", me.username)

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     ugi_api_key: SecretStr = SecretStr("")
     henrikdev_api_key: SecretStr = SecretStr("")
     riot_api_key: SecretStr = SecretStr("")
+    pubg_api_key: SecretStr = SecretStr("")
+    pubg_api_requests_per_minute: int = Field(default=10, ge=1)
     admin_ids: str = ""
     developer_ids: str = ""
     enable_test_profiles: bool = False

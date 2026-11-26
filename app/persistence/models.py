@@ -187,3 +187,19 @@ class RiotProfile(Base):
     match_scope: Mapped[str] = mapped_column(String(24))
     source: Mapped[str] = mapped_column(String(16))
     checked_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class PubgProfile(Base):
+    __tablename__ = "pubg_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(40))
+    nickname: Mapped[str] = mapped_column(String(32))
+    platform: Mapped[str] = mapped_column(String(8))
+    mode_seconds: Mapped[dict | None] = mapped_column(JSON)
+    ranks: Mapped[dict | None] = mapped_column(JSON)
+    playtime_source: Mapped[str | None] = mapped_column(String(16))
+    rank_source: Mapped[str | None] = mapped_column(String(16))
+    season_id: Mapped[str | None] = mapped_column(String(96))
+    playtime_at: Mapped[datetime | None] = mapped_column(DateTime)
+    rank_at: Mapped[datetime | None] = mapped_column(DateTime)
+    checked_at: Mapped[datetime] = mapped_column(DateTime)

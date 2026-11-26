@@ -41,6 +41,7 @@ async def run_polling(bot, dispatcher, settings, discovery):
         BotCommand(command="matches", description="Взаимные симпатии"),
         BotCommand(command="steam", description="Подключить Steam"),
         BotCommand(command="fortnite", description="Статистика Fortnite"),
+        BotCommand(command="pubg", description="Ранг и время в матчах PUBG"),
         BotCommand(command="valorant", description="Ранг и матчи Valorant"),
         BotCommand(command="lol", description="Ранг и матчи League of Legends"),
         BotCommand(command="games", description="Выбрать актуальные игры"),

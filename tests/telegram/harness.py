@@ -82,7 +82,8 @@ class FakeSession(BaseSession):
 
 class Harness:
     def __init__(
-        self, service, public_steam=None, developer_ids="", admin_ids="", steam=None, fortnite=None, riot=None
+        self, service, public_steam=None, developer_ids="", admin_ids="", steam=None, fortnite=None, riot=None,
+        *, pubg=None,
     ):
         settings = Settings(
             _env_file=None,
@@ -99,7 +100,7 @@ class Harness:
                 return await public_steam.fetch(value)
             raise DomainError("Парсер Steam временно недоступен")
 
-        self.bot, self.dp = build_bot(service, settings, fetch_profile, fortnite, riot)
+        self.bot, self.dp = build_bot(service, settings, fetch_profile, fortnite, riot, fetch_pubg_profile=pubg)
         self.session = FakeSession()
         self.bot.session = self.session
         self.counter = 0
