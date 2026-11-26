@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     bot_token: str = ""
     steam_api_key: str = ""
+    deadlock_api_key: SecretStr = SecretStr("")
     api_fortnite_key: SecretStr = SecretStr("")
     api_fortnite_daily_limit: int = Field(default=10_000, ge=1)
     fortnite_api_key: SecretStr = SecretStr("")
@@ -21,6 +22,8 @@ class Settings(BaseSettings):
     riot_api_key: SecretStr = SecretStr("")
     pubg_api_key: SecretStr = SecretStr("")
     pubg_api_requests_per_minute: int = Field(default=10, ge=1)
+    faceit_api_key: SecretStr = SecretStr("")
+    wok_api_key: SecretStr = SecretStr("")
     admin_ids: str = ""
     developer_ids: str = ""
     enable_test_profiles: bool = False

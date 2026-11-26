@@ -25,3 +25,5 @@ class RiotForm(StatesGroup):
 
 class PubgForm(StatesGroup):
     account = State()
+class FaceitForm(StatesGroup):
+    account = State()

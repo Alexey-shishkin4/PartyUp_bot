@@ -49,7 +49,7 @@ def build_steam_router(profiles, steam, fetch_steam_profile):
             text += "\n" + profile.warning
         if saved["dota_match_estimate"]:
             text += "\nДля Dota 2 учтена оценка наигрыша по данным OpenDota."
-        text += "\n/profile — посмотреть анкету. /games — выбрать актуальные игры."
+        text += "\n/profile — посмотреть анкету. /games — выбрать актуальные игры. /cs2 — статистика FACEIT."
         await message.answer(escape(text), reply_markup=menu())
 
     @router.callback_query(F.data.startswith("steam:"))

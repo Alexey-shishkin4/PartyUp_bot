@@ -35,6 +35,9 @@ SOURCE_NAMES = {
     "henrik": "HenrikDev API",
     "henrik_ugi": "HenrikDev API (ранг), ugiAPI (матчи)",
     "ugi_henrik": "ugiAPI (ранг), HenrikDev API (матчи)",
+    "opgg": "OP.GG",
+    "opgg_cached": "OP.GG",
+    "iodid": "Iodid (резерв)",
     "riot": "Riot Games API",
 }
 REFRESH_INTERVAL = timedelta(minutes=15)
@@ -53,15 +56,21 @@ def build_riot_router(profiles, riot, fetch_riot_profile):
         matches = profile.match_count if profile.match_count is not None else "нет данных"
         if profile.match_scope == VALORANT_ACT:
             scope_note = "Обнови статистику, чтобы получить число матчей за доступную историю.\n"
+        elif profile.source == "opgg_cached":
+            scope_note = "Снимок OP.GG старше суток или без подтверждённой даты обновления.\n"
+        elif profile.source == "iodid":
+            scope_note = "Iodid может возвращать сохранённую статистику с задержкой.\n"
         else:
             scope_note = ""
+        rank_label = "Ранг по данным источника" if profile.source in {"opgg_cached", "iodid"} else "Текущий ранг"
+        checked_label = "запрос бота " if game == RiotGame.LEAGUE else ""
         await message.answer(
             f"<b>{GAME_NAMES[game]} · {escape(profile.game_name)}#{escape(profile.tag_line)}</b>\n"
             f"Сервер: {profile.region.upper()}\n"
-            f"Текущий ранг: {rank}\n"
+            f"{rank_label}: {rank}\n"
             f"{SCOPE_LABELS[profile.match_scope]}: {matches}\n"
             f"{scope_note}"
-            f"Источник: {SOURCE_NAMES[profile.source]} · {profile.checked_at:%d.%m.%Y %H:%M} UTC",
+            f"Источник: {SOURCE_NAMES[profile.source]} · {checked_label}{profile.checked_at:%d.%m.%Y %H:%M} UTC",
             reply_markup=buttons(
                 [
                     [("Обновить статистику", f"riot:{game}:refresh")],
