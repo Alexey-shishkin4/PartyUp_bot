@@ -40,6 +40,7 @@ async def run_polling(bot, dispatcher, settings, discovery):
         BotCommand(command="photo", description="Добавить или изменить фото анкеты"),
         BotCommand(command="matches", description="Взаимные симпатии"),
         BotCommand(command="steam", description="Подключить Steam"),
+        BotCommand(command="deadlock", description="Ранг и наигрыш Deadlock"),
         BotCommand(command="fortnite", description="Статистика Fortnite"),
         BotCommand(command="valorant", description="Ранг и матчи Valorant"),
         BotCommand(command="lol", description="Ранг и матчи League of Legends"),

@@ -3,7 +3,9 @@ from dataclasses import dataclass
 
 import httpx
 
-STEAM_INDIVIDUAL_BASE = 76561197960265728
+from app.domain.steam import STEAM_INDIVIDUAL_BASE
+
+
 MATCHMAKING_MINUTES = 7
 PLAYTIME_MULTIPLIER = 1.5
 
