@@ -8,6 +8,9 @@ from app.persistence.models import Base
 def migrate(connection):
     context.configure(connection=connection, target_metadata=Base.metadata)
     with context.begin_transaction():
+        connection.exec_driver_sql(
+            "SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('partyup'))"
+        )
         context.run_migrations()
 
 

@@ -26,10 +26,6 @@ class Database:
         catalog = json.loads((RESOURCES / "catalog.json").read_text(encoding="utf-8"))
         catalog = [{"slug": f"steam-{game['app_id']}", **game} for game in catalog]
         with self.engine.begin() as connection:
-            # Serialize first-time schema creation for this application and schema.
-            connection.exec_driver_sql(
-                "SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('partyup'))"
-            )
             config = Config(str(ROOT / "alembic.ini"))
             config.attributes["connection"] = connection
             command.upgrade(config, "head")

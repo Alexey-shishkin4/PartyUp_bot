@@ -7,6 +7,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
+from migrations.pre_alembic import legacy_tables, prepare_schema, transfer_accounts
+
 revision = "0001"
 down_revision = None
 branch_labels = None
@@ -14,6 +16,16 @@ depends_on = None
 
 
 def upgrade():
+    legacy = legacy_tables()
+    if legacy is not None:
+        # Keep writes from the previous application version out of the data copy.
+        op.execute("LOCK TABLE " + ", ".join(("users", *legacy)) + " IN SHARE ROW EXCLUSIVE MODE")
+        prepare_schema()
+        accounts = create_game_accounts()
+        stats = create_game_stats()
+        transfer_accounts(legacy, accounts, stats)
+        return
+
     op.create_table(
         "fsm_records",
         sa.Column("key", sa.String(length=255), nullable=False),
@@ -106,20 +118,6 @@ def upgrade():
     )
     op.create_index(op.f("ix_events_actor_id"), "events", ["actor_id"], unique=False)
     op.create_table(
-        "game_accounts",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("platform", sa.String(length=16), nullable=False),
-        sa.Column("external_account_id", sa.String(length=96), nullable=False),
-        sa.Column("display_name", sa.String(length=80), nullable=True),
-        sa.Column("checked_at", sa.DateTime(), nullable=True),
-        sa.Column("status", sa.String(length=24), nullable=False),
-        sa.Column("details", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "platform", name="uq_game_accounts_user_platform"),
-    )
-    op.create_table(
         "matches",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("low_id", sa.Integer(), nullable=False),
@@ -168,7 +166,29 @@ def upgrade():
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("user_id", "game_id"),
     )
-    op.create_table(
+    create_game_accounts()
+    create_game_stats()
+
+
+def create_game_accounts():
+    return op.create_table(
+        "game_accounts",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("platform", sa.String(length=16), nullable=False),
+        sa.Column("external_account_id", sa.String(length=96), nullable=False),
+        sa.Column("display_name", sa.String(length=80), nullable=True),
+        sa.Column("checked_at", sa.DateTime(), nullable=True),
+        sa.Column("status", sa.String(length=24), nullable=False),
+        sa.Column("details", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "platform", name="uq_game_accounts_user_platform"),
+    )
+
+
+def create_game_stats():
+    stats = op.create_table(
         "game_stats",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("account_id", sa.Integer(), nullable=False),
@@ -191,6 +211,7 @@ def upgrade():
         sa.UniqueConstraint("account_id", "game_id", name="uq_game_stats_account_game"),
     )
     op.create_index(op.f("ix_game_stats_game_id"), "game_stats", ["game_id"], unique=False)
+    return stats
 
 
 def downgrade():
