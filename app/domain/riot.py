@@ -2,11 +2,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from app.domain.errors import DomainError
+from app.domain.games import LEAGUE_GAME_ID, VALORANT_GAME_ID
 
 
 class RiotGame(StrEnum):
     VALORANT = "valorant"
     LEAGUE = "lol"
+
+
+RIOT_GAME_IDS = {RiotGame.VALORANT: VALORANT_GAME_ID, RiotGame.LEAGUE: LEAGUE_GAME_ID}
 
 
 VALORANT_REGIONS = frozenset({"eu", "na", "ap", "kr", "br", "latam"})
@@ -29,7 +33,6 @@ LEAGUE_ALIASES = {
     "th2": "sg2",
 }
 
-VALORANT_ACT = "valorant_act"
 VALORANT_RIOT_HISTORY = "valorant_riot_history"
 VALORANT_RANKED_ACTS = "valorant_ranked_acts"
 LEAGUE_SOLO = "RANKED_SOLO_5x5"

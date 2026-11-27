@@ -6,6 +6,7 @@ from app.domain.dota import DOTA_APP_ID
 from app.domain.errors import DomainError
 from app.domain.steam import PublicProfile
 
+from .http import api_issue, read_json, request_api
 from .opendota import OpenDotaClient
 from .steam_public import ID_PATTERN, normalize_profile_url
 
@@ -87,28 +88,30 @@ class SteamClient:
         )
 
     async def _include_dota(self, profile: PublicProfile) -> PublicProfile:
-        if self.dota is not None:
-            steam_playtime = any(
-                game["appid"] == DOTA_APP_ID and game.get("playtime_forever", 0) > 0 for game in profile.games
-            )
-            stats = await self.dota.stats(profile.steam_id, need_duration=not steam_playtime)
-            profile.dota_rank_tier = stats.rank_tier
-            profile.dota_rank_checked = stats.rank_checked
-            profile.dota_match_minutes = stats.match_minutes
+        if self.dota is None:
+            return profile
+        game = next((game for game in profile.games if game["appid"] == DOTA_APP_ID), {})
+        stats = await self.dota.stats(profile.steam_id, need_duration=not game.get("playtime_forever"))
+        profile.dota_rank_tier = stats.rank_tier
+        profile.dota_rank_checked = stats.rank_checked
+        profile.dota_match_minutes = stats.match_minutes
         return profile
 
     async def _web_api(self, method, **params):
+        operation = method.rsplit("/", 1)[-1]
         try:
-            response = await self.client.get(
+            response = await request_api(
+                self.client, "steam_web", operation, "GET",
                 f"https://api.steampowered.com/{method}/v1/", params={"key": self.api_key, **params}
             )
             response.raise_for_status()
-            payload = response.json()["response"]
-            if isinstance(payload, dict):
-                return payload
-        except (httpx.HTTPError, ValueError, TypeError, KeyError):
-            pass
-        raise DomainError("Не удалось получить данные Steam. Сохранённые игры остаются доступны")
+            payload = read_json(response, dict).get("response")
+            if not isinstance(payload, dict):
+                api_issue("steam_web", operation, "unexpected_payload")
+                raise ValueError("Invalid Steam response")
+            return payload
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+            raise DomainError("Не удалось получить данные Steam. Сохранённые игры остаются доступны") from None
 
     async def fetch_profile(self, value, public_steam):
         url = normalize_profile_url(value)

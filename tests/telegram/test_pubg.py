@@ -1,7 +1,9 @@
 from datetime import timedelta
 
+from app.domain.steam import PUBG_APP_ID
+from app.persistence.game_stats import find_stats
 from app.domain.pubg import PubgAccount, PubgPlaytime, PubgRanking, PubgStats
-from app.persistence.models import PubgProfile, utcnow
+from app.persistence.models import utcnow
 from tests.telegram.harness import Harness
 
 
@@ -10,7 +12,7 @@ async def test_pubg_saves_both_sections_and_refreshes_only_expired_rank(service,
     account = PubgAccount("account." + "b" * 32, "Example", "steam")
     requests = []
     now = 100.0
-    monkeypatch.setattr("app.telegram.routers.pubg.time", lambda: now)
+    monkeypatch.setattr("app.telegram.routers.game_accounts.time", lambda: now)
 
     async def fetch(platform, nickname, *, account_id, need_playtime, need_rank):
         requests.append((platform, nickname, account_id, need_playtime, need_rank))
@@ -19,23 +21,25 @@ async def test_pubg_saves_both_sections_and_refreshes_only_expired_rank(service,
         return PubgStats(account, playtime, rank)
 
     harness = Harness(service, pubg=fetch)
-    await harness.update(1001, "/pubg")
+    await harness.update(1001, "/games")
+    await harness.update(1001, callback="accounts:choose:pubg")
     await harness.update(1001, "Example")
     assert requests == [("steam", "Example", None, True, True)]
+    await harness.update(1001, "/profile")
     card = harness.sent()[-1].text
-    assert "Время выживания по доступным режимам: 2 ч 30 мин" in card
-    assert "duo-fpp · нет данных" in card
-    assert "Ранг текущего сезона 44" in card
+    assert "PUBG (Gold 3)" in card
+    assert all(value not in card for value in ("1785 RP", "Example", "Время выживания"))
 
-    await harness.update(1001, "/pubg")
-    await harness.update(1001, callback="pubg:refresh")
+    await harness.update(1001, "/games")
+    await harness.update(1001, callback="accounts:refresh:pubg")
     assert len(requests) == 1
 
     with service.db.session.begin() as session:
-        session.get(PubgProfile, user.id).rank_at = utcnow() - timedelta(minutes=16)
+        row = find_stats(session, user.id, "pubg", PUBG_APP_ID)
+        row.details = row.details | {"rank_at": (utcnow() - timedelta(minutes=16)).isoformat()}
     now += 20
-    await harness.update(1001, callback="pubg:refresh")
+    await harness.update(1001, callback="accounts:refresh:pubg")
     assert requests[-1] == ("steam", "Example", account.account_id, False, True)
-    assert service.pubg.get(user.id).mode_seconds == {"solo": 3600, "squad-fpp": 5400}
-    await harness.update(1001, callback="pubg:disconnect")
+    assert service.pubg.get(user.id).details["mode_seconds"] == {"solo": 3600, "squad-fpp": 5400}
+    await harness.update(1001, callback="accounts:disconnect:pubg")
     assert service.pubg.get(user.id) is None

@@ -7,7 +7,6 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile, InputMediaPhoto, Message
 
 from app.config import RESOURCES
-from app.domain.matching import CARD_GAME_LIMIT
 from app.domain.profiles import PHOTO_UNCHANGED
 
 from .ui import buttons, clear_buttons
@@ -29,7 +28,7 @@ def card_game_name(name):
 def profile_text(profile, *, common_games=()):
     sections = [profile_heading(profile)]
     if profile["games"]:
-        names = [card_game_name(name) for name in profile["games"][:CARD_GAME_LIMIT]]
+        names = [card_game_name(name) for name in profile["games"]]
         sections.append("<b>🎮 Игры</b>\n" + "\n".join(f"• {name}" for name in names))
     if common_games:
         sections.append("<b>🤝 Общие игры</b>\n" + " · ".join(map(card_game_name, common_games)))

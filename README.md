@@ -1,108 +1,143 @@
 # PartyUp — Telegram-бот для геймеров
 
-Анкеты 18+, поиск тиммейтов и знакомств по играм, временный поиск компании и взаимные лайки. Пользователи общаются через личные сообщения Telegram.
+Анкеты 18+, поиск тиммейтов и знакомств по играм, временный поиск компании и взаимные лайки. Бот импортирует игровую статистику и помогает находить подходящих игроков. Общение происходит в личных сообщениях Telegram.
+
+**Стек:** Python 3.12, aiogram 3, PostgreSQL 18, SQLAlchemy 2, Alembic, HTTPX, Pydantic Settings, Docker Compose, uv, pytest, Ruff.
 
 ## Запуск через Docker Compose
 
-Запусти Docker Desktop или Docker Engine с Compose. Токен Telegram можно получить командой `/newbot` в [@BotFather](https://t.me/BotFather).
+Получить токен бота можно командой `/newbot` в [@BotFather](https://t.me/BotFather).
 
 ```bash
 [ -f .env ] || cp .env.example .env
-# Заполни BOT_TOKEN и POSTGRES_PASSWORD в .env.
+# Заполни BOT_TOKEN и POSTGRES_PASSWORD в .env
 docker compose up -d --build
 docker compose logs -f partyup
 ```
 
-Когда бот запустится, отправь ему `/start` в личном чате. Ctrl+C закрывает просмотр логов. Команда `docker compose down` останавливает сервисы, данные PostgreSQL остаются в томе `postgres-data`.
+После запуска отправь боту `/start`. Compose поднимает PostgreSQL, дожидается готовности базы и запускает бота. Миграции Alembic применяются автоматически до начала polling. Порт PostgreSQL не публикуется на хосте.
 
-Compose запускает PostgreSQL 18 и ждёт, пока он начнёт принимать соединения. При первом запуске бот создаёт таблицы и загружает каталог игр. PostgreSQL доступен боту по внутренней сети Docker, порт базы на хосте не публикуется. Бот получает сообщения через long polling. Одновременно запускай один экземпляр на токен.
+`docker compose up --build` запускает сервисы с выводом логов в терминал. `docker compose down` останавливает их, сохраняя данные в томе `postgres-data`. Не запускай несколько экземпляров polling с одним токеном.
 
 ### Настройки
 
-| Поле | Значение |
+Все переменные перечислены в [`.env.example`](.env.example). Секреты хранятся в локальном `.env`.
+
+| Переменная | Назначение |
 | --- | --- |
-| `BOT_TOKEN` | Обязательный токен из @BotFather. Храни его в локальном `.env`. |
-| `POSTGRES_PASSWORD` | Обязательный пароль PostgreSQL. Укажи случайный пароль перед первым запуском. |
-| `POSTGRES_USER`, `POSTGRES_DB` | Пользователь и имя базы PostgreSQL. По умолчанию оба значения `partyup`. |
-| `STEAM_API_KEY` | Необязательный [ключ Steam Web API](https://steamcommunity.com/dev/apikey). При пустом ключе используются открытые данные Steam Community. |
-| `FACEIT_API_KEY` | Серверный ключ из [FACEIT App Studio](https://developers.faceit.com/) для статистики CS2. |
-| `WOK_API_KEY` | Ключ [WOK Steam API](https://woksteamapi.com/faceit) для статистики CS2, когда `FACEIT_API_KEY` пустой. |
-| `DEADLOCK_API_KEY` | Необязательный ключ [Deadlock API](https://api.deadlock-api.com/docs). Ранг и сохранённая история доступны без него. |
-| `API_FORTNITE_KEY` | Ключ api-fortnite.com для статистики Fortnite по плейлистам за последние 30 дней. |
-| `FORTNITE_API_KEY` | Необязательный ключ fortnite-api.com для резервного получения BR-наигрыша. |
-| `UGI_API_KEY` | Ключ основного источника Valorant из [ugiAPI Developer Panel](https://api.ugilabs.com/panel/). |
-| `HENRIKDEV_API_KEY` | Ключ для определения сервера и резервной статистики Valorant из [HenrikDev Dashboard](https://api.henrikdev.xyz/dashboard/). |
-| `RIOT_API_KEY` | Ключ для League of Legends и резервного определения сервера Valorant из [Riot Developer Portal](https://developer.riotgames.com/). |
-| `PUBG_API_KEY` | JWT из [PUBG Developer Portal](https://developer.pubg.com/). Нужен для ранга подтверждённого текущего сезона и для Xbox или PlayStation. |
-| `PUBG_API_REQUESTS_PER_MINUTE` | Локальный лимит запросов с PUBG JWT. По умолчанию 10. |
-| `RIOT_API_KEY` | Необязательный ключ для резервной статистики League of Legends и резервного определения сервера Valorant из [Riot Developer Portal](https://developer.riotgames.com/). |
-| `ADMIN_IDS` | Числовые Telegram ID через запятую. Доступ к `/reports`, `/ban`, `/unban` и `/dev`. Свой ID можно получить через `/id` после первого запуска. |
-| `DEVELOPER_IDS` | Telegram ID с доступом к `/dev`. |
-| `ENABLE_TEST_PROFILES` | По умолчанию `false`. Значение `true` включает `/test` и маркированные вымышленные анкеты в обычном поиске. Тестовые реакции не создают совпадений. |
-| `DATA_LOCATION`, `OPERATOR_CONTACT` | Фактическое место хранения данных и контакт для команды `/privacy`. |
+| `BOT_TOKEN`, `POSTGRES_PASSWORD` | Обязательные токен бота и пароль БД. |
+| `POSTGRES_USER`, `POSTGRES_DB` | По умолчанию `partyup`. |
+| `STEAM_API_KEY` | [Steam Web API](https://steamcommunity.com/dev/apikey); без ключа используется Steam Community. |
+| `FACEIT_API_KEY`, `WOK_API_KEY` | [FACEIT](https://developers.faceit.com/) и [WOK](https://woksteamapi.com/faceit) для CS2. |
+| `DEADLOCK_API_KEY` | Необязательный ключ [Deadlock API](https://api.deadlock-api.com/docs). |
+| `API_FORTNITE_KEY`, `FORTNITE_API_KEY` | Источник активности по плейлистам и резервный источник BR-наигрыша. |
+| `API_FORTNITE_DAILY_LIMIT` | Локальный суточный лимит api-fortnite.com. |
+| `UGI_API_KEY`, `HENRIKDEV_API_KEY` | [ugiAPI](https://api.ugilabs.com/panel/) и [HenrikDev](https://api.henrikdev.xyz/dashboard/) для Valorant. |
+| `RIOT_API_KEY` | Необязательный резервный [Riot API](https://developer.riotgames.com/). |
+| `PUBG_API_KEY` | [PUBG API](https://developer.pubg.com/): ранг текущего сезона, консольные профили и поиск по Account ID. |
+| `PUBG_API_REQUESTS_PER_MINUTE` | Локальный лимит официального PUBG API, по умолчанию 10. |
+| `ADMIN_IDS`, `DEVELOPER_IDS` | Telegram ID через запятую для модерации и панели разработчика. |
+| `ENABLE_TEST_PROFILES` | По умолчанию `false`; включает маркированные тестовые анкеты и `/test` без реальных мэтчей с ними. |
+| `DATA_LOCATION`, `OPERATOR_CONTACT` | Информация для `/privacy`. |
 
-## Сценарии бота
+### Логи API
 
-- `/start` регистрирует пользователя, сохраняет черновик, предлагает фото или стандартный аватар и показывает предпросмотр. В `/profile` и `/edit` доступны правки по полям, в `/pause` — пауза, в `/delete` — удаление анкеты и связанных записей.
-- `/find` показывает анкеты по взаимным фильтрам. `/play` ищет компанию в выбранную игру на четыре часа. `/alerts` управляет одноразовым уведомлением о новой подходящей анкете.
-- `/matches` показывает взаимные симпатии и актуальный Telegram `@username` при наличии согласия на обмен контактом. Там же можно пожаловаться или заблокировать анкету.
-- `/games` позволяет выбрать игры вручную. `/steam` принимает ссылку на профиль, обновляет доступную библиотеку и удаляет импорт по запросу. Видимость библиотеки и игровых часов определяется настройками профиля Steam. Для Dota 2 бот получает публичный ранг и при необходимости оценивает наигрыш по матчам OpenDota.
-- `/faceit` и `/cs2` показывают уровень FACEIT, Elo, матчи, победы и процент побед в CS2. При первом открытии бот использует SteamID64, который сохранил после подключения Steam по ссылке. Также можно указать никнейм или ссылку FACEIT либо SteamID64 вручную. Карточку можно обновить, сменить или удалить через `/faceit` в личном чате.
-- `/deadlock` использует подключённый Steam. Бот показывает ранг Valve после последнего доступного рейтингового матча и оценку времени в матчах из истории Deadlock API. В расчёт входят длительности найденных матчей с учётом доступных отметок о выходе. Если данных о длительности не хватает, бот показывает число найденных матчей.
-- `/fortnite` принимает ник Epic Games и показывает доступный наигрыш, любимый режим за 30 дней и его ранг. Статистика по отдельным режимам сохраняется в PostgreSQL. [Источники, ограничения и расчёт](docs/fortnite-api.md).
-- `/pubg Ник` показывает суммарное время выживания, отдельные значения для `solo-fpp`, `solo`, `duo-fpp`, `duo`, `squad-fpp`, `squad` и ранги по доступным очередям. По умолчанию платформа Steam. Для Kakao, Xbox и PlayStation можно указать её перед ником, например `/pubg xbox Ник`.
-- `/valorant Имя#Тег` показывает текущий ранг и число матчей. С ключом ugiAPI бот получает число матчей во всех режимах по доступной истории Riot и отдельно запрашивает ранг. Если эта история недоступна или короче известной рейтинговой истории, бот показывает сумму рейтинговых матчей за все доступные акты. HenrikDev может дать ранг и счётчик рейтинговых матчей без ключа ugiAPI. Полный итог по всем режимам с момента создания аккаунта API не гарантируют. [ugiAPI](https://api.ugilabs.com/docs/), [HenrikDev MMR](https://docs.henrikdev.xyz/valorant/api-reference/mmr).
-- `/lol Имя#Тег` показывает ранг и сумму побед и поражений в Solo/Duo. Если записи Solo/Duo нет, бот использует Flex при наличии. Основной источник рейтинга — OP.GG MCP без ключа. Если источник недоступен или дата его снимка неизвестна либо старше суток, бот пробует Riot Games API при заданном `RIOT_API_KEY`. Если Riot недоступен, бот показывает имеющийся снимок OP.GG с пометкой о свежести либо использует резервную статистику Iodid. [OP.GG MCP](https://github.com/opgginc/opgg-mcp) · [Документация Iodid](https://league-os.safjnest.com/doc) · [Riot Games API](https://developer.riotgames.com/docs/lol).
-- `/dev` открывает диагностику, список анкет, редактирование, предпросмотр подбора и журнал действий. Доступ проверяется по Telegram ID.
+`docker compose logs -f partyup` показывает журнал приложения. Логгер `app.api` фиксирует поставщика, операцию, HTTP-статус, время ответа, сетевые ошибки, ограничения и пропущенные запросы. Для Telegram фиксируется результат операции; успешный polling не засоряет INFO-логи.
 
-Через `/valorant` и `/lol` без аргументов бот запрашивает Riot ID при первом подключении и показывает сохранённый результат при повторном открытии. Бот определяет сервер и сохраняет его для обновлений. Для Valorant с одним ключом ugiAPI можно указать сервер в команде. Пример — `/valorant eu Имя#Тег`. В каждой игре можно сменить Riot ID, обновить статистику раз в 15 минут или удалить её. Статистика видна в личном чате. После добавления ключей в `.env` запусти `docker compose up -d --build partyup`.
+```text
+provider=steam_web operation=GetOwnedGames method=GET status=200 elapsed_ms=84
+provider=faceit operation=cs2_stats method=GET status=429 elapsed_ms=210 retry_after_s=60
+```
 
-При подключении Valorant сервер определяется одним запросом к HenrikDev или двумя запросами к Riot Games API. Для статистики бот делает до двух запросов к ugiAPI и, если часть данных недоступна, один запрос к HenrikDev. Для LoL поиск Iodid определяет сервер при первом запросе. Бот запоминает сервер после сохранения профиля, также можно указать его в команде, например `/lol RU Имя#Тег`. OP.GG получает один запрос профиля за сеанс MCP плюс служебные запросы подключения и закрытия. Публичные числовые лимиты OP.GG MCP и Iodid не указаны. Повторное открытие сохранённой статистики не обращается к API.
+Примеры условные. В этих записях не выводятся URL запросов, ключи, заголовки и тела запросов.
 
-В этой версии Riot ID вводится вручную. Для публичного запуска Valorant-интеграции Riot требует проверять владельца аккаунта и получать его согласие через Riot Sign On. Для этого нужен Production API key. [Правила Riot для Valorant](https://developer.riotgames.com/docs/valorant).
+## Возможности
 
-Для Steam и Kakao бот запрашивает профиль и пожизненный `timeSurvived` через [pubg-api.org](https://pubg-api.org/api). Это время выживания из доступной истории PUBG, суммарное значение складывается из шести перечисленных режимов. Официальный PUBG API используется для ранга текущего сезона и как резерв для профиля и времени выживания. Если официальный запрос ранга недоступен или JWT пустой, бот показывает данные pubg-api.org с пометкой об отсутствии номера сезона. Xbox и PlayStation используют официальный API.
+- `/start`, `/profile`, `/edit`, `/pause`, `/delete` — создание и управление анкетой.
+- `/find`, `/play`, `/alerts` — поиск по взаимным фильтрам, компания на четыре часа и уведомления.
+- `/matches` — взаимные лайки, обмен контактами с согласия пользователей, жалобы и блокировки.
+- `/games` — выбор игр, подключение аккаунтов, обновление и отключение привязок.
+- `/dev` — диагностика, управление анкетами, предпросмотр подбора и журнал действий.
 
-Сохранённая карточка открывается без запросов. При обновлении ранг проверяется не чаще раза в 15 минут, а время выживания — раза в 6 часов. После сохранения ID игрока и сезона обычное обновление ранга требует одного официального запроса. Сезон кэшируется на час для каждой платформы. Повысить официальный лимит можно через **My Apps → I Need a Higher Limit**. [Лимиты PUBG API](https://documentation.pubg.com/en/rate-limits.html).
-Для CS2 создай приложение в FACEIT App Studio и выпусти ключ типа **Server side** в разделе **API Keys**. Добавь его как `FACEIT_API_KEY` в `.env` и пересоздай контейнер командой `docker compose up -d --build partyup`. При загрузке бот запрашивает профиль и сводную статистику игры `cs2`. Повторный просмотр сохранённой карточки обходится без запроса, обновление доступно раз в 15 минут. [Ключи FACEIT](https://docs.faceit.com/getting-started/authentication/api-keys/) · [FACEIT Data API](https://docs.faceit.com/api/data/).
+### Игровые интеграции
 
-Если `FACEIT_API_KEY` пустой, бот использует `WOK_API_KEY`. Подключи Steam по ссылке через `/steam`, затем отправь `/cs2` или `/faceit`. Бот возьмёт сохранённый SteamID64. Без подключённого Steam можно отправить `/faceit SteamID64`. WOK делает два запроса на карточку CS2. Карточка указывает источник данных. Если для старого профиля SteamID64 недоступен, укажи его, чтобы обновить привязку. [Документация WOK](https://woksteamapi.com/docs).
-Deadlock API получает Steam Account ID из SteamID64. Бот делает два запроса на обновление карточки. Первый получает ранг, второй — доступную историю матчей с длительностями. Карточка сохраняется в PostgreSQL, а повторный просмотр в течение 15 минут использует сохранённые данные. Если история недоступна, бот может попробовать получить её через минуту. Оценка охватывает матчи, известные Deadlock API. При отключении или смене Steam сохранённая карточка удаляется. [Документация Deadlock API](https://api.deadlock-api.com/docs).
+| Игра / платформа | Подключение | Данные и источники |
+| --- | --- | --- |
+| Steam | Ссылка на профиль | Библиотека, общий и недавний наигрыш — Steam Web API / Steam Community. |
+| Dota 2 | Steam | Ранг и оценка времени по доступной истории — OpenDota. |
+| CS2 / FACEIT | Steam, ник или ссылка FACEIT | Уровень, Elo, матчи и победы — FACEIT / WOK. |
+| Deadlock | Steam | Ранг, матчи и длительность доступных матчей — Deadlock API. |
+| PUBG | Ник или Account ID | Время выживания и ранги по Solo, Duo, Squad отдельно для FPP/TPP — pubg-api.org / официальный PUBG API. |
+| League of Legends | Riot ID | Ранг Solo/Duo или Flex, матчи — OP.GG MCP / Riot / Iodid. |
+| Valorant | Riot ID | Ранг и матчи по доступной истории — ugiAPI / HenrikDev. |
+| Fortnite | Ник Epic Games | Общий наигрыш, активность и ранги по режимам — Osirion, api-fortnite.com, fortnite-api.com. [Подробнее](docs/fortnite-api.md). |
+
+При импорте Steam бот проверяет Dota 2 и, при наличии наигрыша, FACEIT и Deadlock. При обнаружении PUBG предлагает указать игровой ник или Account ID. Один Riot ID используется для обеих игр Riot.
+
+Аккаунты можно подключать при создании анкеты или через `/games`. Статистика черновика сохраняется при публикации без повторного обращения к API. Карточки читают сохранённые ранги из PostgreSQL. Данные сторонних API могут быть неполными; для публичного запуска Valorant необходимо учитывать [требования Riot Sign On](https://developer.riotgames.com/docs/valorant).
 
 ## Архитектура
 
 ```text
 app/
-  main.py                Конфигурация, PostgreSQL и запуск polling
-  telegram/
-    dispatcher.py        Сборка aiogram-роутеров
-    routers/             Анкеты, поиск, игровые интеграции, модерация и панель разработчика
-    profile_form.py      Общий сценарий регистрации и редактирования
-    cards.py             Карточки, фотографии и отображение в ленте
-    storage.py           Состояния aiogram в PostgreSQL
-  services/              Операции с анкетами, подбором, игровой статистикой и модерацией
-  domain/                Валидация анкеты и правила подбора
-  persistence/           Модели SQLAlchemy и инициализация PostgreSQL
-  integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Fortnite, PUBG и Riot
-  integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Fortnite, Riot и FACEIT
-  integrations/          Клиенты Steam Web API, Steam Community, OpenDota, Deadlock, Fortnite и Riot
-  resources/             Каталог игр, аватар, тестовые данные и отчёт модели
-compose.yaml             Бот и PostgreSQL с постоянным томом
-scripts/                 Воспроизведение эксперимента с подбором игр
-tests/                   Проверки сценариев и интеграций
+  main.py          Запуск приложения и сборка зависимостей
+  telegram/        Роутеры, FSM, карточки и сценарии бота
+  services/        Анкеты, подбор и управление игровыми аккаунтами
+  domain/          Доменные модели, валидация и правила подбора
+  persistence/     SQLAlchemy-модели и работа с PostgreSQL
+  integrations/    Клиенты игровых API и общее логирование HTTP
+  resources/       Каталог игр и ресурсы
+migrations/        Миграции Alembic
+scripts/           Обучение и эксперименты
+tests/             Тесты
 ```
 
-Роутеры принимают сообщения и рисуют интерфейс. Сервисы управляют запросами и транзакциями. Steam-клиенты возвращают снимок доступных данных, который сохраняет сервис импорта. Имена состояний Telegram и callback-кнопок сохраняются между версиями, чтобы черновики и кнопки из старых сообщений продолжали работать.
+Игровые привязки обслуживает `GameAccounts` в `app/services/game_accounts.py`. Telegram использует единый сценарий привязки вместо отдельных роутеров каждой игры. Сервисы конкретных игр преобразуют ответы поставщиков в общую модель хранения.
 
-Лента рассчитывает игровой балл с весами 60/30/10 для главной общей игры, остальных общих игр и жанров. При равных баллах учитывается пересечение расписания. `/model` отправляет отдельно обученную модель сходства игр и её отчёт. Скрипт обучения и производная база описаны в [DATA_LICENSE.md](DATA_LICENSE.md). Чтобы повторить обучение, запусти `uv run --locked --extra training --python 3.12 scripts/train_model.py --csv /path/to/steam-200k.csv`.
+### Схема PostgreSQL
+
+```mermaid
+erDiagram
+    users ||--o{ game_accounts : links
+    users ||--o{ user_games : selects
+    games ||--o{ user_games : contains
+    game_accounts ||--o{ game_stats : has
+    games ||--o{ game_stats : describes
+```
+
+| Таблица | Назначение |
+| --- | --- |
+| `users` | Telegram ID, анкета и настройки пользователя. |
+| `games` | Единый каталог игр со стабильными ID и уникальными slug. |
+| `user_games` | Ручной выбор, импорт Steam и наигрыш для подбора. |
+| `game_accounts` | Внешний аккаунт, платформа, статус и дата проверки. Одна привязка на пару пользователь / платформа. |
+| `game_stats` | Снимок на пару аккаунт / игра: ранг, матчи, минуты, источник, охват, дата проверки. Специфические поля хранятся в JSONB `details`. |
+
+LoL и Valorant используют один Riot-аккаунт и два снимка статистики. Dota 2 и Deadlock используют Steam-аккаунт. Удаление привязки каскадно удаляет её статистику.
+
+Текущий алгоритм подбора учитывает общие игры, наигрыш и жанры (60/30/10 для главной общей игры, остальных общих игр и жанров), а при равном балле — расписание. Ранги отображаются в карточках, но пока не входят непосредственно в формулу балла.
+
+### Миграции
+
+На пустой базе Alembic создаёт схему с нуля. Если том содержит PostgreSQL из версии PartyUp до Alembic, первый запуск на этом же томе обновляет схему и переносит игровой импорт, привязки и статистику. Анкеты, каталог, реакции и история сохраняются. Перед обновлением сделай резервную копию базы.
+
+Если раньше в LoL и Valorant были привязаны разные Riot ID, активным становится ID из последней проверки. Второй снимок сохраняется в `game_accounts.details.previous_profiles`.
+
+```bash
+docker compose up -d --wait db
+docker compose run --rm --no-deps partyup /app/.venv/bin/alembic current
+docker compose run --rm --no-deps partyup /app/.venv/bin/alembic upgrade head
+```
+
+При изменении ORM-моделей создай и проверь новую ревизию (`alembic revision --autogenerate -m "описание"`). Команда `alembic check` проверяет соответствие моделей применённой схеме.
 
 ## Проверки
 
-Для тестов с базой задай `PARTYUP_TEST_DATABASE_URL` для отдельной базы PostgreSQL. Тесты создают и удаляют изолированные схемы. Ответы Telegram и Steam подменяются.
-
 ```bash
 uv run --locked --extra dev --python 3.12 -m pytest -q
-uv run --locked --extra dev --python 3.12 ruff check app scripts tests
+uv run --locked --extra dev --python 3.12 ruff check app migrations scripts tests
 ```
 
-`pyproject.toml` задаёт зависимости, `uv.lock` фиксирует их версии для Docker и тестов.
+Для тестов с БД задай `PARTYUP_TEST_DATABASE_URL` для отдельной PostgreSQL. Тесты используют изолированные схемы и подменяют внешние ответы.
+
+Зависимости фиксируются в `uv.lock`. Обучение отдельной модели сходства игр описано в [DATA_LICENSE.md](DATA_LICENSE.md); для воспроизведения используется `scripts/train_model.py` и extra `training`.

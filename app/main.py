@@ -1,14 +1,15 @@
 import asyncio
 import logging
+import sys
 from functools import partial
 
 import httpx
-from aiogram.exceptions import TelegramAPIError, TelegramUnauthorizedError
+from aiogram.exceptions import ClientDecodeError, TelegramAPIError, TelegramUnauthorizedError
 from aiogram.utils.token import TokenValidationError, validate_token
 
 from app.config import Settings
-from app.integrations.faceit import FaceitClient
 from app.integrations.deadlock import DeadlockClient
+from app.integrations.faceit import FaceitClient
 from app.integrations.fortnite import FortniteClient
 from app.integrations.opendota import OpenDotaClient
 from app.integrations.pubg import PubgClient
@@ -61,18 +62,15 @@ async def run(settings: Settings):
                 client, settings.pubg_api_key.get_secret_value(),
                 requests_per_minute=settings.pubg_api_requests_per_minute,
             )
-            bot, dispatcher = build_bot(
-                services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch, fetch_pubg_profile=pubg.fetch
             faceit = FaceitClient(
                 client, settings.faceit_api_key.get_secret_value(),
                 wok_api_key=settings.wok_api_key.get_secret_value(),
             )
-            bot, dispatcher = build_bot(
-                services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch,
-                fetch_faceit_profile=faceit.fetch,
             deadlock = DeadlockClient(client, settings.deadlock_api_key.get_secret_value())
             bot, dispatcher = build_bot(
                 services, settings, fetch_steam_profile, fortnite.fetch, riot.fetch,
+                fetch_pubg_profile=pubg.fetch,
+                fetch_faceit_profile=faceit.fetch,
                 fetch_deadlock_profile=deadlock.fetch,
             )
             try:
@@ -81,7 +79,7 @@ async def run(settings: Settings):
                 await run_polling(bot, dispatcher, settings, services.discovery)
             except TelegramUnauthorizedError:
                 raise SystemExit("Telegram отклонил BOT_TOKEN. Проверьте токен в @BotFather.") from None
-            except TelegramAPIError as error:
+            except (TelegramAPIError, ClientDecodeError) as error:
                 raise SystemExit(f"Не удалось запустить Telegram polling ({type(error).__name__}).") from None
             finally:
                 await bot.session.close()
@@ -90,7 +88,7 @@ async def run(settings: Settings):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stdout)
     # HTTP request URLs can include the Steam API key.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)

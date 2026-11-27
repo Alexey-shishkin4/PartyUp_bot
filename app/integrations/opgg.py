@@ -6,6 +6,8 @@ import httpx
 
 from app.domain.riot import LEAGUE_FLEX, LEAGUE_SOLO, RiotId
 
+from .http import api_issue, request_api
+
 
 URL = "https://mcp-api.op.gg/mcp"
 PROTOCOL = "2025-03-26"
@@ -131,7 +133,9 @@ async def ranked_profile(http: httpx.AsyncClient, region: str, account: RiotId):
             body["params"] = params
         if request_id is not None:
             body["id"] = request_id
-        response = await http.post(URL, headers=headers, json=body, follow_redirects=False, timeout=5)
+        response = await request_api(
+            http, "opgg", method, "POST", URL, headers=headers, json=body, follow_redirects=False, timeout=5
+        )
         return response.raise_for_status()
 
     opened = await post("initialize", {
@@ -142,12 +146,15 @@ async def ranked_profile(http: httpx.AsyncClient, region: str, account: RiotId):
     session = opened.headers.get("Mcp-Session-Id")
     if session:
         headers["Mcp-Session-Id"] = session
+    operation = "initialize"
     try:
         version = rpc_result(opened, 1).get("protocolVersion")
         if not isinstance(version, str) or version not in SUPPORTED_PROTOCOLS:
             raise ValueError("Unsupported OP.GG MCP protocol version")
         headers["MCP-Protocol-Version"] = version
+        operation = "notifications/initialized"
         await post("notifications/initialized")
+        operation = "tools/call"
         response = await post("tools/call", {
             "name": "lol_get_summoner_profile",
             "arguments": {
@@ -158,9 +165,15 @@ async def ranked_profile(http: httpx.AsyncClient, region: str, account: RiotId):
             },
         }, request_id=2)
         return parse_profile(rpc_result(response, 2), account)
+    except ValueError:
+        api_issue("opgg", operation, "invalid_mcp_response")
+        raise
     finally:
         if session:
             try:
-                await http.delete(URL, headers=headers, follow_redirects=False, timeout=2)
-            except httpx.RequestError:
+                await request_api(
+                    http, "opgg", "close_session", "DELETE", URL,
+                    headers=headers, follow_redirects=False, timeout=2,
+                )
+            except (httpx.RequestError, httpx.InvalidURL):
                 pass

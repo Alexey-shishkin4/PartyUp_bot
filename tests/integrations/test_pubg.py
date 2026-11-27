@@ -1,6 +1,6 @@
 import httpx
 
-from app.domain.pubg import MODES, PubgPlaytime, PubgRanking
+from app.domain.pubg import MODES, PubgAccount, PubgPlaytime, PubgRanking, parse_account
 from app.integrations.pubg import PubgClient
 
 
@@ -80,3 +80,23 @@ async def test_pubg_keeps_lifetime_stats_when_both_rank_sources_are_unavailable(
         stats = await PubgClient(http, "pubg-jwt").fetch("steam", "Example", account_id=ACCOUNT)
     assert stats.playtime is not None
     assert stats.ranking is None
+
+
+async def test_pubg_accepts_account_id_and_resolves_nickname():
+    calls = []
+
+    def respond(request):
+        calls.append(request.url.path)
+        if request.url.path == f"/shards/steam/players/{ACCOUNT}":
+            assert request.headers["Authorization"] == "Bearer pubg-jwt"
+            return httpx.Response(200, json={"data": PLAYER})
+        assert request.url.path == "/api/lifetime/stats"
+        assert request.url.params["accountId"] == ACCOUNT
+        return httpx.Response(200, json=LIFETIME)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        client = PubgClient(http, "pubg-jwt")
+        stats = await client.fetch(*parse_account(f"steam {ACCOUNT}"), need_rank=False)
+
+    assert stats.account == PubgAccount(ACCOUNT, "Example", "steam")
+    assert calls == [f"/shards/steam/players/{ACCOUNT}", "/api/lifetime/stats"]

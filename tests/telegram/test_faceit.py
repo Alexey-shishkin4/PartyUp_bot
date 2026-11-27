@@ -7,7 +7,9 @@ from app.domain.errors import DomainError
 from app.domain.faceit import FaceitLookup, FaceitStats
 from app.integrations.faceit import FaceitClient
 from app.integrations.steam import SteamClient
-from app.persistence.models import FaceitProfile, User, utcnow
+from app.domain.steam import CS2_APP_ID, PublicProfile
+from app.persistence.game_stats import find_stats
+from app.persistence.models import utcnow
 from tests.telegram.harness import Harness
 
 
@@ -17,11 +19,10 @@ STEAM_ID = "76561198000000000"
 
 async def test_faceit_links_steam_reads_cached_stats_and_keeps_them_on_refresh_failure(service, users, monkeypatch):
     user = users(1001)
-    with service.db.session.begin() as session:
-        session.get(User, user.id).steam_id = STEAM_ID
+    service.steam.save_public_steam(user.id, PublicProfile(STEAM_ID, f"https://steamcommunity.com/profiles/{STEAM_ID}"))
     lookups = []
     now = 100.0
-    monkeypatch.setattr("app.telegram.routers.faceit.time", lambda: now)
+    monkeypatch.setattr("app.telegram.routers.game_accounts.time", lambda: now)
 
     async def fetch(lookup):
         lookups.append(lookup)
@@ -32,30 +33,32 @@ async def test_faceit_links_steam_reads_cached_stats_and_keeps_them_on_refresh_f
         return FaceitStats(PLAYER_ID, "PartyUp-Test", 9, 1891, 1200, 654, 54.5)
 
     harness = Harness(service, faceit=fetch)
-    await harness.update(1001, "/faceit")
+    await harness.update(1001, "/games")
+    await harness.update(1001, callback="accounts:choose:faceit")
+    await harness.update(1001, STEAM_ID)
+    await harness.update(1001, "/profile")
     text = harness.sent()[-1].text
-    assert "Уровень FACEIT: 9/10" in text
-    assert "Elo: 1891" in text
-    assert "Матчи CS2: 1200" in text
-    assert "Источник: WOK Steam API" in text
+    assert "Counter-Strike 2 (FACEIT 9)" in text
+    assert "1891" not in text and "PartyUp-Test" not in text
+    assert service.faceit.get(user.id).source == "wok"
 
-    await harness.update(1001, "/cs2")
-    await harness.update(1001, callback="faceit:refresh")
+    await harness.update(1001, callback="accounts:refresh:faceit")
     assert lookups == [FaceitLookup("steam_id", STEAM_ID)]
 
     with service.db.session.begin() as session:
-        session.get(FaceitProfile, user.id).checked_at = utcnow() - timedelta(minutes=16)
+        find_stats(session, user.id, "faceit", CS2_APP_ID).checked_at = utcnow() - timedelta(minutes=16)
     now += 20
-    await harness.update(1001, callback="faceit:refresh")
+    await harness.update(1001, callback="accounts:refresh:faceit")
     assert lookups[-1] == FaceitLookup("player_id", PLAYER_ID, steam_id=STEAM_ID)
     assert "временно недоступна" in harness.sent()[-1].text
-    assert service.faceit.get(user.id).elo == 1891
+    assert service.faceit.get(user.id).details["elo"] == 1891
 
-    await harness.update(1001, callback="faceit:disconnect")
+    await harness.update(1001, callback="accounts:disconnect:faceit")
     assert service.faceit.get(user.id) is None
 
     now += 20
-    await harness.update(1001, "/cs2 PartyUp-Test")
+    await harness.update(1001, callback="accounts:choose:faceit")
+    await harness.update(1001, "PartyUp-Test")
     assert lookups[-1] == FaceitLookup("nickname", "PartyUp-Test")
     assert service.faceit.get(user.id)
     await harness.update(1001, "/delete")
@@ -64,10 +67,10 @@ async def test_faceit_links_steam_reads_cached_stats_and_keeps_them_on_refresh_f
 
 
 @pytest.mark.parametrize(
-    ("steam_path", "command"),
-    [(f"profiles/{STEAM_ID}", "/cs2"), ("id/partyup-test", "/faceit")],
+    ("steam_path", "minutes"),
+    [(f"profiles/{STEAM_ID}", 60), ("id/partyup-test", 60), ("id/partyup-test", 0)],
 )
-async def test_faceit_automatically_reuses_steam_id_from_link(service, users, steam_path, command):
+async def test_faceit_automatically_reuses_steam_id_from_link(service, users, steam_path, minutes):
     user = users(1001)
     requests = []
 
@@ -79,7 +82,9 @@ async def test_faceit_automatically_reuses_steam_id_from_link(service, users, st
                 assert request.url.params["vanityurl"] == "partyup-test"
                 return httpx.Response(200, json={"response": {"success": 1, "steamid": STEAM_ID}})
             assert request.url.params["steamid"] == STEAM_ID
-            return httpx.Response(200, json={"response": {"game_count": 0, "games": []}})
+            return httpx.Response(200, json={"response": {"game_count": 1, "games": [
+                {"appid": 730, "name": "Counter-Strike 2", "playtime_forever": minutes},
+            ]}})
         assert host == "woksteamapi.com"
         if path == "/faceit/data/v4/players":
             assert dict(request.url.params) == {"game": "cs2", "game_player_id": STEAM_ID}
@@ -96,13 +101,14 @@ async def test_faceit_automatically_reuses_steam_id_from_link(service, users, st
         await harness.update(1001, "/steam")
         await harness.update(1001, f"https://steamcommunity.com/{steam_path}")
         assert service.profiles.user(user.id).steam_id == STEAM_ID
-        assert service.faceit.get(user.id) is None
-
-        before = len(requests)
-        await harness.update(1001, command)
-        assert service.faceit.get(user.id).steam_id == STEAM_ID
-        assert "Матчи CS2: 1200" in harness.sent()[-1].text
-        assert requests[before:] == [
+        calls = [(host, path) for host, path in requests if host == "woksteamapi.com"]
+        if minutes == 0:
+            assert service.faceit.get(user.id) is None
+            assert not calls
+            return
+        row = service.faceit.get(user.id)
+        assert row.account.details["steam_id"] == STEAM_ID and row.matches_count == 1200
+        assert calls == [
             ("woksteamapi.com", "/faceit/data/v4/players"),
             ("woksteamapi.com", f"/faceit/data/v4/players/{PLAYER_ID}/stats/cs2"),
         ]

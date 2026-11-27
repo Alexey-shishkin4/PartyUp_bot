@@ -19,6 +19,8 @@ import httpx
 from app.domain.errors import DomainError
 from app.domain.steam import PublicProfile
 
+from .http import api_issue, api_skipped, stream_api
+
 MAX_BYTES = 4_000_000
 ID_PATTERN = re.compile(r"7656119\d{10}")
 
@@ -163,24 +165,29 @@ class PublicSteamParser:
         self.lock = asyncio.Lock()
         self.last_request = 0.0
 
-    async def get(self, url):
+    async def get(self, url, *, operation):
         # Follow a bounded number of same-origin redirects; never contact a user-supplied host.
         for _ in range(4):
-            parsed = urlsplit(url)
-            if (
-                parsed.scheme != "https"
-                or parsed.hostname != "steamcommunity.com"
-                or parsed.port not in {None, 443}
-            ):
+            try:
+                parsed = urlsplit(url)
+                allowed = (
+                    parsed.scheme == "https" and parsed.hostname == "steamcommunity.com"
+                    and parsed.port in {None, 443}
+                )
+            except ValueError:
+                allowed = False
+            if not allowed:
+                api_issue("steam_community", operation, "invalid_redirect")
                 raise DomainError("Steam перенаправил запрос за пределы своего сайта")
             if parsed.path.startswith("/login"):
+                api_skipped("steam_community", operation, "login_required")
                 return None
             async with self.lock:
                 await asyncio.sleep(max(0.0, self.interval - (time.monotonic() - self.last_request)))
                 self.last_request = time.monotonic()
                 try:
-                    async with self.client.stream(
-                        "GET",
+                    async with stream_api(
+                        self.client, "steam_community", operation, "GET",
                         url,
                         headers={
                             "User-Agent": "PartyUp/0.1 public-profile reader",
@@ -189,7 +196,11 @@ class PublicSteamParser:
                         follow_redirects=False,
                     ) as response:
                         if response.status_code in {301, 302, 303, 307, 308}:
-                            url = urljoin(url, response.headers.get("location", ""))
+                            try:
+                                url = urljoin(url, response.headers.get("location", ""))
+                            except ValueError:
+                                api_issue("steam_community", operation, "invalid_redirect")
+                                raise DomainError("Steam вернул некорректное перенаправление") from None
                             continue
                         if response.status_code in {401, 403, 429}:
                             return None
@@ -198,23 +209,29 @@ class PublicSteamParser:
                         async for chunk in response.aiter_bytes():
                             size += len(chunk)
                             if size > MAX_BYTES:
+                                api_issue("steam_community", operation, "response_too_large")
                                 raise DomainError("Ответ Steam слишком большой")
                             chunks.append(chunk)
                         return b"".join(chunks).decode("utf-8", "replace")
-                except httpx.HTTPError:
+                except (httpx.HTTPError, httpx.InvalidURL):
                     raise DomainError(
                         "Steam временно недоступен. Сохранённые интересы остаются доступны"
                     ) from None
+        api_issue("steam_community", operation, "too_many_redirects")
         raise DomainError("Слишком много перенаправлений Steam")
 
     async def fetch(self, value: str):
         url = normalize_profile_url(value)
-        text = await self.get(url + "/?xml=1")
+        text = await self.get(url + "/?xml=1", operation="profile_xml")
         if text is None:
             raise DomainError(
                 "Steam сейчас не отдаёт профиль без входа. Можно сохранить интересы вручную и попробовать позже"
             )
-        root = xml_root(text)
+        try:
+            root = xml_root(text)
+        except DomainError:
+            api_issue("steam_community", "profile_xml", "invalid_xml")
+            raise
         steam_id = root.findtext("steamID64", "")
         if root.tag != "profile" or not ID_PATTERN.fullmatch(steam_id):
             raise DomainError("Профиль Steam не найден. Проверь ссылку")
@@ -226,7 +243,7 @@ class PublicSteamParser:
         result.coverage = "recent" if result.games else "profile_only"
         # One attempt at the library; login redirects and denials are respected.
         try:
-            library = await self.get(result.url + "/games/?tab=all&xml=1")
+            library = await self.get(result.url + "/games/?tab=all&xml=1", operation="library")
             games = None
             if library and library.lstrip().startswith("<?xml"):
                 games = parse_games_xml(library)

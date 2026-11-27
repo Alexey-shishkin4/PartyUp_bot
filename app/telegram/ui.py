@@ -5,11 +5,6 @@ CONTACT_NOTICE = "При взаимном лайке бот покажет со�
 MAX_PHOTO_SIZE = 10 * 1024 * 1024
 
 
-def playtime(minutes):
-    hours, remainder = divmod(minutes, 60)
-    return f"{hours} ч {remainder} мин" if hours else f"{remainder} мин"
-
-
 def buttons(rows):
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -23,7 +18,7 @@ def menu():
         keyboard=[
             [KeyboardButton(text="🔎 Найти своих"), KeyboardButton(text="💜 Совпадения")],
             [KeyboardButton(text="👤 Моя анкета"), KeyboardButton(text="🎮 Steam")],
-            [KeyboardButton(text="🎮 Хочу сыграть сейчас")],
+            [KeyboardButton(text="🎮 Хочу сыграть сейчас"), KeyboardButton(text="➕ Добавить игры")],
         ],
         resize_keyboard=True,
     )

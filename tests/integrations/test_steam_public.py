@@ -96,11 +96,11 @@ async def test_private_profile_does_not_trigger_library_request():
     assert result.coverage == "profile_only" and result.games == [] and len(calls) == 1
 
 
-def test_partial_import_preserves_library_and_total_hours(service, users):
+def test_partial_import_preserves_library_and_total_hours(service, users, steam_library):
     a = users(1)
-    service.steam.import_games(a.id,[{"appid":105600,"name":"Terraria","playtime_forever":1000},
+    steam_library(a.id,[{"appid":105600,"name":"Terraria","playtime_forever":1000},
                                {"appid":730,"name":"CS2","playtime_forever":500}])
-    service.steam.import_games(a.id,[{"appid":105600,"name":"Terraria","playtime_2weeks":60}],complete=False)
+    steam_library(a.id,[{"appid":105600,"name":"Terraria","playtime_2weeks":60}], coverage="recent")
     games = {game.app_id:game for game in service.profiles.user(a.id).games}
     assert games[105600].minutes == 1000 and games[105600].recent_minutes == 60
     assert games[730].minutes == 500

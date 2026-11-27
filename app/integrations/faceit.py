@@ -7,6 +7,8 @@ import httpx
 from app.domain.errors import DomainError
 from app.domain.faceit import NICKNAME, STEAM_ID, FaceitLookup, FaceitStats
 
+from .http import api_issue, api_skipped, read_json, request_api
+
 
 BASE_URL = "https://open.faceit.com/data/v4"
 WOK_URL = "https://woksteamapi.com/faceit/data/v4"
@@ -33,12 +35,14 @@ class FaceitClient:
         faceit_key = api_key.strip()
         wok_key = wok_api_key.strip()
         self.uses_wok = not faceit_key and bool(wok_key)
+        self.provider = "wok" if self.uses_wok else "faceit"
         self.api_key = faceit_key or wok_key
         self.base_url = WOK_URL if self.uses_wok else BASE_URL
         self.cooldown_until = 0.0
 
     async def fetch(self, lookup: FaceitLookup) -> FaceitStats:
         if not self.api_key:
+            api_skipped(self.provider, "profile", "missing_key")
             raise DomainError("Интеграция FACEIT пока не настроена. Сообщи администратору бота.")
 
         expected_id = None
@@ -54,20 +58,22 @@ class FaceitClient:
             if steam_id is None or not STEAM_ID.fullmatch(steam_id):
                 raise DomainError("WOK ищет профиль по SteamID64. Укажи его или выбери подключённый Steam.")
         if steam_id is not None:
-            player = await self.get("/players", params={"game": GAME, "game_player_id": steam_id})
+            player = await self.get("player_by_steam", "/players", params={"game": GAME, "game_player_id": steam_id})
         elif expected_id is not None:
-            player = await self.get(f"/players/{expected_id}")
+            player = await self.get("player_by_id", f"/players/{expected_id}")
         else:
-            player = await self.get("/players", params={"nickname": lookup.value})
+            player = await self.get("player_by_nickname", "/players", params={"nickname": lookup.value})
         if player is None:
             raise DomainError("Профиль FACEIT не найден. Проверь никнейм или SteamID64.")
 
         nickname = player.get("nickname")
         if not isinstance(nickname, str) or not NICKNAME.fullmatch(nickname):
+            api_issue(self.provider, "profile", "invalid_nickname")
             raise DomainError(UNAVAILABLE)
         try:
             player_id = str(UUID(player["player_id"]))
         except (KeyError, AttributeError, TypeError, ValueError):
+            api_issue(self.provider, "profile", "invalid_player_id")
             raise DomainError(UNAVAILABLE) from None
         if expected_id is not None and player_id != expected_id:
             if self.uses_wok:
@@ -92,13 +98,15 @@ class FaceitClient:
         if steam_id is None and returned_steam_id is not None and STEAM_ID.fullmatch(str(returned_steam_id)):
             steam_id = str(returned_steam_id)
 
-        stats = await self.get(f"/players/{player_id}/stats/{GAME}")
+        stats = await self.get("cs2_stats", f"/players/{player_id}/stats/{GAME}")
         if stats is not None and (stats.get("game_id", GAME) != GAME or stats.get("player_id", player_id) != player_id):
+            api_issue(self.provider, "cs2_stats", "unexpected_stats_identity")
             raise DomainError(UNAVAILABLE)
         lifetime = stats.get("lifetime") if stats is not None else None
         if lifetime is None:
             lifetime = {}
         if not isinstance(lifetime, dict):
+            api_issue(self.provider, "cs2_stats", "invalid_lifetime_stats")
             raise DomainError(UNAVAILABLE)
         matches = integer(lifetime.get("Matches"))
         wins = integer(lifetime.get("Wins"), maximum=matches if matches is not None else 2_147_483_647)
@@ -114,15 +122,17 @@ class FaceitClient:
             wins,
             win_rate,
             steam_id=steam_id,
-            source="wok" if self.uses_wok else "faceit",
+            source=self.provider,
         )
 
-    async def get(self, path: str, *, params=None) -> dict | None:
+    async def get(self, operation: str, path: str, *, params=None) -> dict | None:
         rate_limit = "WOK ограничил запросы. Попробуй обновить статистику позже." if self.uses_wok else RATE_LIMIT
         if monotonic() < self.cooldown_until:
+            api_skipped(self.provider, operation, "cooldown")
             raise DomainError(rate_limit)
         try:
-            response = await self.http.get(
+            response = await request_api(
+                self.http, self.provider, operation, "GET",
                 self.base_url + path,
                 params=params,
                 headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"},
@@ -144,9 +154,6 @@ class FaceitClient:
                 self.cooldown_until = max(self.cooldown_until, monotonic() + (retry_after or 60))
                 raise DomainError(rate_limit)
             response.raise_for_status()
-            data = response.json()
-        except (httpx.HTTPError, ValueError):
+            return read_json(response, dict)
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
             raise DomainError(UNAVAILABLE) from None
-        if not isinstance(data, dict):
-            raise DomainError(UNAVAILABLE)
-        return data

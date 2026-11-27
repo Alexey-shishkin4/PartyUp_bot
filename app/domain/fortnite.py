@@ -63,3 +63,11 @@ class FortniteSnapshot:
     playtime: Playtime | None = None
     activity: Activity | None = None
     ranks: dict[str, Rank] | None = None
+
+
+def favorite_rank_mode(favorite: str | None, ranks: dict[str, str | None]) -> str | None:
+    if favorite and ranks.get(favorite):
+        return favorite
+    if favorite in {"reload", "reload_zero_build"} and ranks.get("reload_combined"):
+        return "reload_combined"
+    return None

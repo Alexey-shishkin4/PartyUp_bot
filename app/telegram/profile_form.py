@@ -4,10 +4,11 @@ from html import escape
 from aiogram.types import FSInputFile
 from pydantic import ValidationError
 
-from app.domain.dota import DOTA_APP_ID, dota_game_name
+from app.domain.dota import DOTA_APP_ID, dota_game_name, dota_rank_name
 from app.domain.errors import DomainError
+from app.domain.game_links_draft import GameLinksDraft
 from app.domain.matching import CARD_GAME_LIMIT, steam_card_game_ids
-from app.domain.profiles import PHOTO_UNCHANGED, PURPOSES, ProfileInput
+from app.domain.profiles import ProfileInput
 from app.persistence.models import Game
 
 from .cards import DEFAULT_AVATAR, profile_text
@@ -53,7 +54,6 @@ STEPS = [
 ]
 FIELD_STEPS = {field: (prompt, choices) for field, prompt, choices in STEPS}
 REGISTRATION_FIELDS = ("name", "age", "timezone", "bio")
-PREVIOUS_REGISTRATION_FIELDS = ("name", "age", "purpose", "timezone", "hours")
 EDIT_FIELDS = (
     (("Имя", "name"), ("Возраст", "age")),
     (("Цель знакомства", "purpose"), ("Описание", "bio")),
@@ -63,44 +63,23 @@ EDIT_FIELDS = (
 )
 
 
-def registration_fields(data):
-    if data.get("new_registration"):
-        return REGISTRATION_FIELDS
-    if data.get("short_registration"):
-        return PREVIOUS_REGISTRATION_FIELDS
-    return tuple(item[0] for item in STEPS)
-
-
 class ProfileForm:
-    def __init__(self, profiles, cards):
+    def __init__(self, profiles, cards, draft_providers):
         self.profiles = profiles
         self.cards = cards
+        self.draft_providers = draft_providers
 
     async def prompt(self, message, state):
         data = await state.get_data()
         index = data["step_index"]
-        fields = registration_fields(data)
-        if index >= len(fields) and data.get("new_registration"):
+        if index >= len(REGISTRATION_FIELDS):
             await self.prompt_registration_avatar(message, state)
-            return
-        if index >= len(fields) and data.get("short_registration"):
-            await self.show_game_source(message, state)
-            return
-        if index >= len(fields):
-            await state.update_data(photo_flow="registration")
-            await state.set_state(Form.photo)
-            await message.answer(
-                f"<b>{len(STEPS) + 1}/{len(STEPS) + 2}</b> · Добавь фото анкеты.\n"
-                "Отправь одну фотографию обычным фото через скрепку Telegram. "
-                "Она будет видна людям в подборке. Можно продолжить без нового фото.",
-                reply_markup=buttons([[("Продолжить без нового фото", "photo:keep")]]),
-            )
             return
         await self.show_field(
             message,
             state,
-            fields[index],
-            prefix=f"<b>{index + 1}/{len(fields) + 1}</b> · ",
+            REGISTRATION_FIELDS[index],
+            prefix=f"<b>{index + 1}/{len(REGISTRATION_FIELDS) + 1}</b> · ",
             back="form:back" if index > 0 else None,
         )
 
@@ -120,8 +99,12 @@ class ProfileForm:
     async def consume_step(self, message, state, sender, value, expected_field=None):
         data = await state.get_data()
         index = data.get("step_index", 0)
-        fields = registration_fields(data)
-        field = data.get("edit_field") or fields[index]
+        field = data.get("edit_field")
+        if field is None:
+            if not data.get("new_registration") or index >= len(REGISTRATION_FIELDS):
+                await message.answer("Открой регистрацию через /start.")
+                return
+            field = REGISTRATION_FIELDS[index]
         if expected_field is not None and expected_field != field:
             await message.answer("Эта кнопка относится к предыдущему шагу.")
             return
@@ -200,17 +183,26 @@ class ProfileForm:
         return catalog
 
     async def show_game_source(self, message, state):
+        links = GameLinksDraft.from_state(await state.get_data())
         await state.set_state(Form.game_source)
+        rows = [
+            [("🎮 Подключить Steam", "registration:steam")],
+            [("Выбрать игры из списка", "registration:manual")],
+        ]
+        rows.extend(self.draft_link_rows(links))
+        rows.extend([[("Пропустить", "registration:skip")], [("← Назад", "form:back")]])
         await message.answer(
             "Подключи Steam, чтобы бот сам выбрал игры для анкеты и учёл всю доступную библиотеку в подборе.",
-            reply_markup=buttons(
-                [
-                    [("🎮 Подключить Steam", "registration:steam")],
-                    [("Выбрать игры из списка", "registration:manual")],
-                    [("← Назад", "form:back")],
-                ]
-            ),
+            reply_markup=buttons(rows),
         )
+
+    def draft_link_rows(self, links):
+        names = {"riot": "Riot", "fortnite": "Fortnite", "pubg": "PUBG", "faceit": "FACEIT", "deadlock": "Deadlock"}
+        options = [
+            (f"✓ {names[name]}" if getattr(links, name) else f"Подключить {names[name]}", f"draftgame:{name}")
+            for name in self.draft_providers
+        ]
+        return [options[index:index + 2] for index in range(0, len(options), 2)]
 
     async def show_games(self, message, state, query=""):
         data = await state.get_data()
@@ -227,9 +219,11 @@ class ProfileForm:
             for game in games
         ]
         rows.append([("Посмотреть анкету" if registration else "Сохранить игры", "game:save")])
-        if data.get("short_registration"):
+        if registration:
+            if not data.get("reviewed"):
+                rows.append([("Пропустить", "registration:skip")])
             rows.append([("← Назад", "review:open" if data.get("reviewed") else "registration:source")])
-        elif not registration:
+        else:
             rows.append([("← К настройкам", "edit:menu")])
         names = [catalog[app_id].name[:55] for app_id in selected if app_id in catalog]
         await message.answer(
@@ -241,33 +235,23 @@ class ProfileForm:
     async def prompt_registration_steam(self, message):
         await message.answer(
             "Пришли ссылку на свой профиль steamcommunity.com. Получим доступные игры и часы для подбора, "
-            "а для Dota 2 проверим публичную статистику в OpenDota.",
-            reply_markup=buttons([[("← К выбору способа", "registration:source")]]),
+            "а для игр с наигрышем проверим доступные ранги.",
+            reply_markup=buttons([[("← Назад", "registration:source"), ("Пропустить", "registration:skip")]]),
         )
 
-    async def finish_photo(self, message, state, file_id=PHOTO_UNCHANGED, *, use_default_avatar=False):
+    async def finish_photo(self, message, state, file_id, *, use_default_avatar=False):
         data = await state.get_data()
         if data.get("photo_flow") in {"registration", "review"}:
-            if file_id is not PHOTO_UNCHANGED:
-                await state.update_data(draft_photo_file_id=file_id, draft_default_avatar=use_default_avatar)
+            await state.update_data(draft_photo_file_id=file_id, draft_default_avatar=use_default_avatar)
             if data.get("photo_flow") == "review":
                 await self.review_profile(message, state)
-                return
-            if data.get("new_registration"):
+            else:
                 await self.show_game_source(message, state)
-                return
-            await state.set_state(Form.games)
-            await message.answer(
-                "Выбери от 1 до 10 актуальных игр. Напиши название для поиска или выбирай кнопками. Steam можно подключить после сохранения."
-            )
-            await self.show_games(message, state)
         else:
             await state.clear()
             text = (
                 "Стандартный аватар установлен."
                 if use_default_avatar
-                else "Вернулись в меню."
-                if file_id is PHOTO_UNCHANGED
                 else "Фото удалено из анкеты."
                 if file_id is None
                 else "Фото сохранено."
@@ -293,20 +277,24 @@ class ProfileForm:
         dota = played.get(DOTA_APP_ID, (DOTA_APP_ID, 0, 0))
         if steam.get("dota_match_minutes") and dota[1] == 0:
             played[DOTA_APP_ID] = (DOTA_APP_ID, steam["dota_match_minutes"], dota[2])
-        return steam_card_game_ids(played.values())
+        games = steam_card_game_ids(played.values())
+        if DOTA_APP_ID not in games and dota_rank_name(steam.get("dota_rank_tier")):
+            games.append(DOTA_APP_ID)
+        return games
 
-    def draft_profile(self, data):
+    def draft_profile(self, data, links):
         highlights = self.draft_steam_highlights(data)
         draft = ProfileInput.model_validate(
             {**data["form"], "game_ids": data.get("selected", [])},
-            context={"allow_empty_games": bool(highlights)},
+            context={"allow_empty_games": bool(highlights) or links.has_links or data.get("skip_games", False)},
         )
         return draft, highlights
 
     async def review_profile(self, message, state):
         data = await state.get_data()
+        links = GameLinksDraft.from_state(data)
         try:
-            draft, highlights = self.draft_profile(data)
+            draft, highlights = self.draft_profile(data, links)
         except (KeyError, ValidationError):
             await message.answer("Выбери хотя бы одну игру, чтобы посмотреть анкету.")
             await state.set_state(Form.games)
@@ -315,10 +303,13 @@ class ProfileForm:
         catalog = self.registration_catalog(data)
         game_ids = highlights or sorted(draft.game_ids)[:CARD_GAME_LIMIT]
         rank = (data.get("draft_steam") or {}).get("dota_rank_tier")
-        games = [
-            dota_game_name(app_id, catalog[app_id].name, rank) for app_id in game_ids if app_id in catalog
-        ]
-        profile = {**draft.model_dump(), "games": games, "purpose_label": PURPOSES[draft.purpose]}
+        games = {
+            app_id: dota_game_name(app_id, catalog[app_id].name, rank) for app_id in game_ids if app_id in catalog
+        }
+        for app_id, game_rank in links.game_ranks().items():
+            name = catalog[app_id].name
+            games[app_id] = f"{name} ({game_rank})" if game_rank else name
+        profile = {**draft.model_dump(), "games": list(games.values())}
         wanted = {value: label for label, value in FIELD_STEPS["looking_for"][1]}[draft.looking_for]
         language = {value: label for label, value in FIELD_STEPS["language"][1]}[draft.language]
         filters = f"Кого показывать: {wanted.lower()} · {draft.age_min}–{draft.age_max} лет · {language}"
@@ -328,8 +319,9 @@ class ProfileForm:
             [("Опубликовать анкету", "review:publish")],
             [("Изменить", "review:fields"), ("Фото", "review:photo"), ("Описание", "review:bio")],
         ]
-        if data.get("draft_steam"):
-            rows.append([("Изменить ссылку Steam", "registration:steam")])
+        rows.extend(self.draft_link_rows(links))
+        steam_label = "Изменить ссылку Steam" if data.get("draft_steam") else "Подключить Steam"
+        rows.append([(steam_label, "registration:steam")])
         photo = (
             FSInputFile(DEFAULT_AVATAR)
             if data.get("draft_default_avatar")
@@ -371,6 +363,6 @@ class ProfileForm:
             profile,
             profile_text(profile) + "\n\n/pause — пауза · /delete — удалить",
             reply_markup=buttons(
-                [[("Изменить анкету", "edit:menu")], [("Фото", "edit:photo"), ("Игры", "edit:games")]]
+                [[("Изменить анкету", "edit:menu")], [("Фото", "edit:photo"), ("Добавить игры", "accounts:open")]]
             ),
         )

@@ -19,9 +19,12 @@ from app.integrations.fortnite_stats import (
     raw_activity,
 )
 
+from .http import api_issue, api_skipped, read_json, request_api
+
 OSIRION = "https://fnapi.osirion.gg"
 API_FORTNITE = "https://prod.api-fortnite.com"
 FORTNITE_API = "https://fortnite-api.com"
+PROVIDERS = {OSIRION: "osirion", API_FORTNITE: "api-fortnite.com", FORTNITE_API: "fortnite-api.com"}
 
 
 class RequestBudget:
@@ -81,21 +84,26 @@ class FortniteClient:
             FORTNITE_API: RequestBudget(per_minute=30),
         }
 
-    async def _get(self, base, path, *, params=None):
+    async def _get(self, base, operation, path, *, params=None):
+        provider = PROVIDERS[base]
         headers = {}
         if base == API_FORTNITE:
             if not self.api_fortnite_key:
+                api_skipped(provider, operation, "missing_key")
                 return {}
             headers = {"x-api-key": self.api_fortnite_key}
         elif base == FORTNITE_API:
             if not self.fortnite_api_key:
+                api_skipped(provider, operation, "missing_key")
                 return {}
             headers = {"Authorization": self.fortnite_api_key}
         budget = self.budgets[base]
         if not budget.reserve():
+            api_skipped(provider, operation, "request_budget")
             return {}
         try:
-            response = await self.client.get(
+            response = await request_api(
+                self.client, provider, operation, "GET",
                 base + path, params=params, headers=headers, timeout=10, follow_redirects=False
             )
             budget.observe(response)
@@ -109,15 +117,19 @@ class FortniteClient:
                     "Fortnite закрыл доступ к статистике. Проверь настройку Public Game Stats в игре."
                 )
             response.raise_for_status()
-            payload = mapping(response.json())
-            return payload if payload.get("success") is not False else {}
-        except (httpx.HTTPError, ValueError):
+            payload = read_json(response, dict)
+            if payload.get("success") is False:
+                api_issue(provider, operation, "provider_rejected")
+                return {}
+            return payload
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError):
             return {}
 
     async def _resolve(self, nickname):
         result = osirion_account(
             await self._get(
                 OSIRION,
+                "account_lookup",
                 "/v1/accounts/lookup-by-display-name",
                 params={"displayName": nickname, "platform": "epic"},
             ),
@@ -125,14 +137,17 @@ class FortniteClient:
         )
         if result:
             return result, None
-        lookup = await self._get(API_FORTNITE, "/api/v1/account/displayName/" + quote(nickname, safe=""))
+        lookup = await self._get(
+            API_FORTNITE, "account_lookup", "/api/v1/account/displayName/" + quote(nickname, safe="")
+        )
         lookup = mapping(lookup.get("data")) or lookup
         result = account(lookup.get("id") or lookup.get("accountId"), lookup.get("displayName"), nickname)
         if result:
             return result, None
         return dashboard_stats(
             await self._get(
-                FORTNITE_API, "/v2/stats/br/v2", params={"name": nickname, "timeWindow": "lifetime"}
+                FORTNITE_API, "account_lookup", "/v2/stats/br/v2",
+                params={"name": nickname, "timeWindow": "lifetime"},
             ),
             nickname,
         )
@@ -149,20 +164,22 @@ class FortniteClient:
         stats_path = f"/api/v2/stats/{resolved.account_id}"
         stats_params = {"accountId": resolved.account_id}
         osirion, all_time, recent, ranked = await asyncio.gather(
-            self._get(OSIRION, "/v1/stats/account", params={**stats_params, "timeframe": "lifetime"}),
-            self._get(API_FORTNITE, stats_path),
+            self._get(OSIRION, "lifetime_stats", "/v1/stats/account", params={**stats_params, "timeframe": "lifetime"}),
+            self._get(API_FORTNITE, "lifetime_stats", stats_path),
             self._get(
                 API_FORTNITE,
+                "recent_stats",
                 stats_path,
                 params={"startTime": int((now - RECENT_WINDOW).timestamp()), "endTime": int(now.timestamp())},
             ),
-            self._get(OSIRION, "/v1/ranked/account-ranks", params={**stats_params, "lang": "en"}),
+            self._get(OSIRION, "ranked_stats", "/v1/ranked/account-ranks", params={**stats_params, "lang": "en"}),
         )
         playtime = osirion_playtime(osirion)
         if playtime is None and dashboard is None:
             _, dashboard = dashboard_stats(
                 await self._get(
-                    FORTNITE_API, "/v2/stats/br/v2/" + resolved.account_id, params={"timeWindow": "lifetime"}
+                    FORTNITE_API, "lifetime_stats", "/v2/stats/br/v2/" + resolved.account_id,
+                    params={"timeWindow": "lifetime"},
                 )
             )
         aggregate = playtime or dashboard

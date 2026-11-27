@@ -9,7 +9,7 @@ from app.services.fixture_catalog import fixture_definitions, fixture_photo
 from app.services.fixtures import seed_test_profiles
 
 
-def test_fixtures_with_photos_and_source_links(service):
+def test_fixtures_with_photos(service):
     seed_test_profiles(service)
     fixtures = fixture_definitions()
     with service.db.session() as session:
@@ -19,8 +19,7 @@ def test_fixtures_with_photos_and_source_links(service):
         row = fixtures[user.telegram_id]
         assert user.telegram_id < 0 and user.age >= 18 and not user.steam_id
         assert user.name == row["name"] and fixture_photo(user.telegram_id).is_file()
-        info = service.profiles.public_profile(user)
-        assert info["is_test"] and info["has_photo"] and info["photo_source_url"] == row.get("pin_url")
+        assert service.profiles.test_photo_file(user.id) == fixture_photo(user.telegram_id)
         if "library" in row:
             assert {entry.app_id: (entry.minutes, entry.recent_minutes, entry.imported) for entry in user.games} == {
                 game["app_id"]: (game["hours"] * 60, game.get("recent_hours", 0) * 60, True)
